@@ -104,10 +104,11 @@ export class DuelCardForge extends Extension.withSave(duelSave)<DuelAppProps> {
 
 export default DuelCardForge;
 
-// 剧情 Block：印卡 / 加入卡牌 / 修改卡牌 / 直接召唤
+// 剧情 Block：开始战斗 / 印卡 / 加入卡牌 / 修改卡牌 / 直接召唤
 export {
   DirectSummonBlock,
   GiveCardBlock,
   ModifyCardBlock,
   PrintCardBlock,
+  StartBattleBlock,
 } from "./blocks/story-blocks";

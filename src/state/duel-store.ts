@@ -7,8 +7,12 @@
  *   - Block 用 get/set 直接改，改完面板立刻重渲染。
  *
  * 一个扩展实例内只有一场决斗；重新开始/离开时把状态置为 null。
+ *
+ * 另外缓存一份「玩家当前卡组」：Block 拿不到 Extension 实例的 this.save，
+ * 所以由面板在读取/修改卡组时同步过来，剧情开战时用它组牌。
  */
 import type { DuelState } from "../engine/duel-engine";
+import type { DeckEntry } from "../types";
 
 let currentState: DuelState | null = null;
 const listeners = new Set<() => void>();
@@ -33,4 +37,15 @@ export function subscribeDuelState(listener: () => void): () => void {
   return () => {
     listeners.delete(listener);
   };
+}
+
+/** 面板最近一次读到的玩家卡组（来自存档）。 */
+let cachedDeck: readonly DeckEntry[] = [];
+
+export function setCachedDeck(deck: readonly DeckEntry[]): void {
+  cachedDeck = deck;
+}
+
+export function getCachedDeck(): readonly DeckEntry[] {
+  return cachedDeck;
 }

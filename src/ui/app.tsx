@@ -12,6 +12,7 @@ import {
 import { STARTER_CARDS, STARTER_DECK } from "../data/starter-cards";
 import {
   getDuelState,
+  setCachedDeck,
   setDuelState,
   subscribeDuelState,
 } from "../state/duel-store";
@@ -117,6 +118,11 @@ export function DuelApp(props: DuelAppProps): React.ReactElement {
       /* 同上 */
     }
   };
+
+  // 把玩家卡组同步给共享 store，剧情 Block 开战时才能用上玩家自己组的牌。
+  useEffect(() => {
+    setCachedDeck(deck);
+  }, [deck]);
 
   const [tab, setTab] = useState<TabId>("cards");
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);

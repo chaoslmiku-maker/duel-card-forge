@@ -2,12 +2,12 @@
   "id": "user.duel-card-forge",
   "name": "决斗卡牌工坊",
   "author": "卡牌作战自定义",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "entry": "dist/index.mjs",
   "hasProgram": true,
   "sdkVersion": "^2.0.0",
   "icon": "assets/icon.png",
   "riskTier": "safe",
-  "description": "可视化自由编辑规则的卡牌战斗扩展：攻击力、守备力、种族、花费、卡牌效果与立绘全部可视化编辑，对战规则（生命值、手牌、召唤、祭品、穿透……）随时可改，玩法接近游戏王。",
+  "description": "可视化自由编辑规则的卡牌战斗扩展：攻击力、守备力、种族、花费、卡牌效果与立绘全部可视化编辑，对战规则随时可改；剧情里可用 Block 开始战斗、印卡、改卡、直接召唤，玩法接近游戏王。",
   "permissions": []
 }

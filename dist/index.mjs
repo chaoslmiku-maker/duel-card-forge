@@ -676,6 +676,13 @@ function subscribeDuelState(listener) {
     listeners.delete(listener);
   };
 }
+let cachedDeck = [];
+function setCachedDeck(deck) {
+  cachedDeck = deck;
+}
+function getCachedDeck() {
+  return cachedDeck;
+}
 let uidSeq = 0;
 function nextUid() {
   uidSeq += 1;
@@ -4302,6 +4309,9 @@ function DuelApp(props) {
     } catch {
     }
   };
+  useEffect(() => {
+    setCachedDeck(deck);
+  }, [deck]);
   const [tab, setTab] = useState("cards");
   const [selectedCardId, setSelectedCardId] = useState(null);
   const [notice, setNotice] = useState(null);
@@ -5052,6 +5062,137 @@ _DirectSummonBlock.schema = {
   }
 };
 let DirectSummonBlock = _DirectSummonBlock;
+function readRules(ctx) {
+  const raw = ctx.settings.get("rulesJson");
+  if (!raw) return DEFAULT_RULES;
+  try {
+    return normalizeRules(JSON.parse(raw));
+  } catch {
+    return DEFAULT_RULES;
+  }
+}
+function resolveDeck(cards, source) {
+  const candidates = source === "starter" ? STARTER_DECK : getCachedDeck();
+  const usable = candidates.filter(
+    (entry) => entry.count > 0 && cards.some((card) => card.id === entry.cardId)
+  );
+  if (usable.length > 0) {
+    return { deck: usable, note: source === "starter" ? "内置示例卡组" : "当前卡组" };
+  }
+  const fallback = STARTER_DECK.filter(
+    (entry) => cards.some((card) => card.id === entry.cardId)
+  );
+  return {
+    deck: fallback,
+    note: source === "starter" ? "内置示例卡组" : "当前卡组为空（面板还没打开过），已改用示例卡组"
+  };
+}
+function waitForDuelEnd() {
+  const initial = getDuelState();
+  if (!initial) return Promise.resolve("aborted");
+  if (initial.winner) return Promise.resolve(initial.winner);
+  return new Promise((resolve) => {
+    let settled = false;
+    let unsubscribe = null;
+    function finish(result) {
+      if (settled) return;
+      settled = true;
+      unsubscribe?.();
+      resolve(result);
+    }
+    unsubscribe = subscribeDuelState(() => {
+      const state = getDuelState();
+      if (!state) {
+        finish("aborted");
+        return;
+      }
+      if (state.winner) finish(state.winner);
+    });
+  });
+}
+const _StartBattleBlock = class _StartBattleBlock extends BlockExtension {
+  async run(ctx, params) {
+    const p = params;
+    const cards = readLibrary(ctx);
+    const { deck, note } = resolveDeck(cards, p.deckSource ?? "cached");
+    if (deck.length === 0) {
+      console.warn("[决斗卡牌工坊] 开始战斗：没有可用的卡组，已跳过。");
+      return;
+    }
+    const rules = readRules(ctx);
+    setDuelState(startDuel(cards, deck, rules));
+    console.log(`[决斗卡牌工坊] 开始战斗：使用${note}，共 ${deck.length} 张。`);
+    const openPanel = p.openPanel !== false;
+    let waitForEnd = p.waitForEnd !== false;
+    if (openPanel) {
+      try {
+        await ctx.ui.show("duel-forge", void 0, {
+          size: "(100%, 100%)",
+          position: "(0, 0)",
+          interactable: true
+        });
+      } catch (error) {
+        console.warn("[决斗卡牌工坊] 开始战斗：打开面板失败", error);
+      }
+    }
+    if (!openPanel && waitForEnd) {
+      console.warn(
+        "[决斗卡牌工坊] 开始战斗：未开启「自动打开面板」，无法等待战斗结束，已改为立即继续剧情。"
+      );
+      waitForEnd = false;
+    }
+    if (!waitForEnd) return;
+    const result = await waitForDuelEnd();
+    const variable = (p.resultVariable ?? "").trim() || "duelResult";
+    try {
+      ctx.variables.set(variable, result);
+    } catch (error) {
+      console.warn("[决斗卡牌工坊] 开始战斗：写入结果变量失败", error);
+    }
+    if (p.closePanelOnEnd !== false && result !== "aborted") {
+      try {
+        await ctx.ui.hide("duel-forge");
+      } catch {
+      }
+    }
+  }
+};
+_StartBattleBlock.type = "dcf-start-battle";
+_StartBattleBlock.title = "开始战斗：在剧情中开一局";
+_StartBattleBlock.description = "用面板里的卡组（或示例卡组）开始一场决斗，自动打开面板；可等分出胜负后再继续剧情，并把结果写入变量供 If 分支使用。";
+_StartBattleBlock.category = "卡牌工坊";
+_StartBattleBlock.schema = {
+  deckSource: {
+    type: "enum",
+    label: "使用卡组",
+    options: [
+      { label: "当前卡组（玩家在面板里组的）", value: "cached" },
+      { label: "内置示例卡组", value: "starter" }
+    ],
+    default: "cached"
+  },
+  openPanel: {
+    type: "boolean",
+    label: "自动打开面板",
+    default: true
+  },
+  waitForEnd: {
+    type: "boolean",
+    label: "等待战斗结束再继续剧情",
+    default: true
+  },
+  resultVariable: {
+    type: "string",
+    label: "结果写入变量",
+    default: "duelResult"
+  },
+  closePanelOnEnd: {
+    type: "boolean",
+    label: "结束后关闭面板",
+    default: true
+  }
+};
+let StartBattleBlock = _StartBattleBlock;
 const duelSave = defineSave({
   deck: {
     type: "list",
@@ -5124,6 +5265,7 @@ export {
   GiveCardBlock,
   ModifyCardBlock,
   PrintCardBlock,
+  StartBattleBlock,
   DuelCardForge as default
 };
 //# sourceMappingURL=index.js.map

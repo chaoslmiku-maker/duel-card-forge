@@ -1,6 +1,7 @@
 /**
- * 剧情 Block：在剧本里直接干预卡牌与对战。
+ * 剧情 Block：在剧本里直接开战与干预对战。
  *
+ * - 开始战斗：用面板里的卡组开一局，可等分出胜负后继续剧情，并把结果写进变量；
  * - 印卡：现场创建一张新卡，写进卡牌库，并可同时放进手牌/卡组/场上；
  * - 给予卡牌：把卡牌库里已有的卡放进手牌或卡组；
  * - 修改卡牌：改攻击力/守备力/花费/等级/种族/效果文本/立绘，或追加一条效果；
@@ -15,25 +16,35 @@ import {
   type ExtensionContext,
 } from "@avg-studio/sdk";
 import {
+  DEFAULT_RULES,
   makeId,
   normalizeCard,
   normalizeCards,
+  normalizeRules,
   type CardAttribute,
   type CardDefinition,
   type CardEffect,
   type CardKeyword,
   type CardKind,
+  type DeckEntry,
+  type DuelRules,
 } from "../types";
-import { STARTER_CARDS } from "../data/starter-cards";
+import { STARTER_CARDS, STARTER_DECK } from "../data/starter-cards";
 import {
   addCardToZone,
   replaceCardInstances,
+  startDuel,
   summonDirect,
   type DuelState,
   type MonsterPosition,
   type SideId,
 } from "../engine/duel-engine";
-import { getDuelState, setDuelState } from "../state/duel-store";
+import {
+  getCachedDeck,
+  getDuelState,
+  setDuelState,
+  subscribeDuelState,
+} from "../state/duel-store";
 
 // ---------------------------------------------------------------------------
 // 公共工具
@@ -565,6 +576,182 @@ export class DirectSummonBlock extends BlockExtension {
       return;
     }
     commitDuel(result.state);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 5. 开始战斗（剧情内开一局，可等待结果）
+// ---------------------------------------------------------------------------
+
+interface StartBattleParams {
+  deckSource: string;
+  openPanel: boolean;
+  waitForEnd: boolean;
+  resultVariable: string;
+  closePanelOnEnd: boolean;
+}
+
+function readRules(ctx: ExtensionContext): DuelRules {
+  const raw = ctx.settings.get<string>("rulesJson");
+  if (!raw) return DEFAULT_RULES;
+  try {
+    return normalizeRules(JSON.parse(raw) as unknown);
+  } catch {
+    return DEFAULT_RULES;
+  }
+}
+
+/** 选中卡组里当前卡牌库仍然存在的条目；都不存在时退回示例卡组。 */
+function resolveDeck(
+  cards: CardDefinition[],
+  source: string,
+): { deck: DeckEntry[]; note: string } {
+  const candidates = source === "starter" ? STARTER_DECK : getCachedDeck();
+  const usable = candidates.filter(
+    (entry) =>
+      entry.count > 0 && cards.some((card) => card.id === entry.cardId),
+  );
+  if (usable.length > 0) {
+    return { deck: usable, note: source === "starter" ? "内置示例卡组" : "当前卡组" };
+  }
+  const fallback = STARTER_DECK.filter((entry) =>
+    cards.some((card) => card.id === entry.cardId),
+  );
+  return {
+    deck: fallback,
+    note:
+      source === "starter"
+        ? "内置示例卡组"
+        : "当前卡组为空（面板还没打开过），已改用示例卡组",
+  };
+}
+
+/**
+ * 等这一场决斗分出胜负。
+ * 面板被关闭（state 变 null）视为中断，返回 aborted，避免剧情卡死。
+ */
+function waitForDuelEnd(): Promise<
+  "player" | "opponent" | "draw" | "aborted"
+> {
+  const initial = getDuelState();
+  if (!initial) return Promise.resolve("aborted");
+  if (initial.winner) return Promise.resolve(initial.winner);
+  return new Promise((resolve) => {
+    let settled = false;
+    let unsubscribe: (() => void) | null = null;
+
+    function finish(result: "player" | "opponent" | "draw" | "aborted"): void {
+      if (settled) return;
+      settled = true;
+      unsubscribe?.();
+      resolve(result);
+    }
+
+    unsubscribe = subscribeDuelState(() => {
+      const state = getDuelState();
+      if (!state) {
+        finish("aborted");
+        return;
+      }
+      if (state.winner) finish(state.winner);
+    });
+  });
+}
+
+export class StartBattleBlock extends BlockExtension {
+  static readonly type = "dcf-start-battle";
+  static readonly title = "开始战斗：在剧情中开一局";
+  static readonly description =
+    "用面板里的卡组（或示例卡组）开始一场决斗，自动打开面板；可等分出胜负后再继续剧情，并把结果写入变量供 If 分支使用。";
+  static readonly category = "卡牌工坊";
+
+  static readonly schema: BlockSchema = {
+    deckSource: {
+      type: "enum",
+      label: "使用卡组",
+      options: [
+        { label: "当前卡组（玩家在面板里组的）", value: "cached" },
+        { label: "内置示例卡组", value: "starter" },
+      ],
+      default: "cached",
+    },
+    openPanel: {
+      type: "boolean",
+      label: "自动打开面板",
+      default: true,
+    },
+    waitForEnd: {
+      type: "boolean",
+      label: "等待战斗结束再继续剧情",
+      default: true,
+    },
+    resultVariable: {
+      type: "string",
+      label: "结果写入变量",
+      default: "duelResult",
+    },
+    closePanelOnEnd: {
+      type: "boolean",
+      label: "结束后关闭面板",
+      default: true,
+    },
+  };
+
+  async run(
+    ctx: ExtensionContext,
+    params: Record<string, unknown>,
+  ): Promise<void> {
+    const p = params as unknown as StartBattleParams;
+    const cards = readLibrary(ctx);
+    const { deck, note } = resolveDeck(cards, p.deckSource ?? "cached");
+    if (deck.length === 0) {
+      console.warn("[决斗卡牌工坊] 开始战斗：没有可用的卡组，已跳过。");
+      return;
+    }
+
+    const rules = readRules(ctx);
+    setDuelState(startDuel(cards, deck, rules));
+    console.log(`[决斗卡牌工坊] 开始战斗：使用${note}，共 ${deck.length} 张。`);
+
+    const openPanel = p.openPanel !== false;
+    let waitForEnd = p.waitForEnd !== false;
+
+    if (openPanel) {
+      try {
+        await ctx.ui.show("duel-forge", undefined, {
+          size: "(100%, 100%)",
+          position: "(0, 0)",
+          interactable: true,
+        });
+      } catch (error) {
+        console.warn("[决斗卡牌工坊] 开始战斗：打开面板失败", error);
+      }
+    }
+
+    if (!openPanel && waitForEnd) {
+      console.warn(
+        "[决斗卡牌工坊] 开始战斗：未开启「自动打开面板」，无法等待战斗结束，已改为立即继续剧情。",
+      );
+      waitForEnd = false;
+    }
+
+    if (!waitForEnd) return;
+
+    const result = await waitForDuelEnd();
+    const variable = (p.resultVariable ?? "").trim() || "duelResult";
+    try {
+      ctx.variables.set(variable, result);
+    } catch (error) {
+      console.warn("[决斗卡牌工坊] 开始战斗：写入结果变量失败", error);
+    }
+
+    if (p.closePanelOnEnd !== false && result !== "aborted") {
+      try {
+        await ctx.ui.hide("duel-forge");
+      } catch {
+        /* 面板可能已被玩家手动关闭 */
+      }
+    }
   }
 }
 

@@ -347,5 +347,102 @@ fullState = {
 const fullResult = engine.summonDirect(fullState, "player", dragon, "attack");
 eq(fullResult.ok, false, "场上满员时直接召唤失败");
 
+// 21. 指定对手卡组：双方各用各的牌
+let twoDecks = engine.startDuel(
+  library,
+  deckOf(dragon, 5),
+  baseRules,
+  deckOf(wall, 6),
+);
+eq(
+  twoDecks.opponent.hand.length + twoDecks.opponent.deck.length,
+  6,
+  "对手使用指定卡组（共 6 张）",
+);
+truthy(
+  [...twoDecks.opponent.hand, ...twoDecks.opponent.deck].every(
+    (c) => c.card.id === "t_wall",
+  ),
+  "对手所有牌都来自指定卡组",
+);
+truthy(
+  [...twoDecks.player.hand, ...twoDecks.player.deck].every(
+    (c) => c.card.id === "t_dragon",
+  ),
+  "玩家牌库不受对手卡组影响",
+);
+
+// 22. 对手先攻（AI 关闭时对手直接跳过）
+const opponentFirst = engine.startDuel(
+  library,
+  deckOf(dragon, 6),
+  { ...baseRules, aiEnabled: false },
+  undefined,
+  "opponent",
+);
+eq(opponentFirst.active, "player", "对手先攻后轮到玩家");
+eq(opponentFirst.turn, 2, "对手先攻后回合数推进到 2");
+eq(
+  opponentFirst.player.hand.length,
+  baseRules.startingHand + baseRules.drawPerTurn,
+  "后手玩家在首个回合正常抽牌",
+);
+truthy(
+  opponentFirst.log.some((l) => l.text.includes("先攻")),
+  "日志记录了对手先攻",
+);
+
+// 23. 对手先攻 + 先攻不可攻击：AI 会召唤但不会打掉玩家 LP
+const strong = {
+  ...dragon,
+  id: "t_strong",
+  name: "测试强攻",
+  level: 3,
+  attack: 3000,
+  defense: 1000,
+  cost: 1,
+};
+const strongLibrary = [...library, strong];
+const lockRules = {
+  ...DEFAULT_RULES,
+  startingHand: 3,
+  aiEnabled: true,
+  summonPerTurn: 1,
+  energyStart: 10,
+  energyPerTurn: 10,
+  energyMax: 10,
+  firstTurnAttack: false,
+};
+let lockState = engine.startDuel(
+  strongLibrary,
+  deckOf(strong, 8),
+  lockRules,
+  deckOf(strong, 8),
+  "opponent",
+);
+eq(
+  lockState.player.lp,
+  lockRules.startingLp,
+  "先攻不可攻击：AI 首回合不会打掉玩家 LP",
+);
+truthy(
+  lockState.opponent.monsters.filter(Boolean).length > 0,
+  "AI 首回合仍然会召唤怪兽",
+);
+
+// 24. 先攻可以攻击：AI 首回合就能造成伤害
+const rushRules = { ...lockRules, firstTurnAttack: true };
+const rush = engine.startDuel(
+  strongLibrary,
+  deckOf(strong, 8),
+  rushRules,
+  deckOf(strong, 8),
+  "opponent",
+);
+truthy(
+  rush.player.lp < rushRules.startingLp,
+  `先攻可攻击：AI 首回合造成伤害（玩家 LP ${rush.player.lp}）`,
+);
+
 console.log(`\n${checks - failures}/${checks} 项通过`);
 if (failures > 0) process.exitCode = 1;

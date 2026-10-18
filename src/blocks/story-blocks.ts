@@ -586,6 +586,9 @@ export class DirectSummonBlock extends BlockExtension {
 
 interface StartBattleParams {
   deckSource: string;
+  opponentDeckSource: string;
+  opponentDeckSpec: string;
+  firstSide: string;
   openPanel: boolean;
   waitForEnd: boolean;
   resultVariable: string;
@@ -625,6 +628,61 @@ function resolveDeck(
         ? "内置示例卡组"
         : "当前卡组为空（面板还没打开过），已改用示例卡组",
   };
+}
+
+/**
+ * 解析「卡名*张数」形式的卡组文本。
+ * 支持逗号、分号、换行分隔，也接受「x」「×」当乘号。
+ */
+function parseDeckSpec(text: string, cards: CardDefinition[]): DeckEntry[] {
+  const counts = new Map<string, number>();
+  const parts = text
+    .split(/[,;，；\n]/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  for (const part of parts) {
+    const matched = part.match(/^(.+?)(?:\s*[*x×]\s*(\d+))?$/);
+    if (!matched) continue;
+    const card = findCard(cards, matched[1].trim());
+    if (!card) {
+      console.warn(`[决斗卡牌工坊] 对手卡组：卡牌库里没有「${matched[1].trim()}」，已忽略。`);
+      continue;
+    }
+    const count = Math.max(1, Math.min(9, Number(matched[2] ?? 1) || 1));
+    counts.set(card.id, Math.min(9, (counts.get(card.id) ?? 0) + count));
+  }
+  return Array.from(counts.entries()).map(([cardId, count]) => ({
+    cardId,
+    count,
+  }));
+}
+
+/**
+ * 对手卡组：
+ *   - mirror：返回 undefined，引擎会镜像玩家卡组；
+ *   - starter：过滤后的示例卡组；
+ *   - custom：按「卡名*张数」解析，解析不出来就退回镜像。
+ */
+function resolveOpponentDeck(
+  cards: CardDefinition[],
+  p: StartBattleParams,
+): DeckEntry[] | undefined {
+  const source = p.opponentDeckSource ?? "mirror";
+  if (source === "mirror") return undefined;
+  if (source === "starter") {
+    const starter = STARTER_DECK.filter((entry) =>
+      cards.some((card) => card.id === entry.cardId),
+    );
+    return starter.length > 0 ? starter : undefined;
+  }
+  const parsed = parseDeckSpec(p.opponentDeckSpec ?? "", cards);
+  if (parsed.length === 0) {
+    console.warn(
+      "[决斗卡牌工坊] 对手卡组：自定义内容为空或没匹配到卡牌，已改回镜像玩家卡组。",
+    );
+    return undefined;
+  }
+  return parsed;
 }
 
 /**
@@ -673,18 +731,44 @@ export class StartBattleBlock extends BlockExtension {
   static readonly type = "dcf-start-battle";
   static readonly title = "开始战斗：在剧情中开一局";
   static readonly description =
-    "用面板里的卡组（或示例卡组）开始一场决斗，自动打开面板；可等分出胜负后再继续剧情，并把结果写入变量供 If 分支使用。";
+    "用面板里的卡组（或指定卡组）开始一场决斗，可指定对手卡组与先后手；自动打开面板，可等分出胜负后再继续剧情，并把结果写入变量供 If 分支使用。";
   static readonly category = "卡牌工坊";
 
   static readonly schema: BlockSchema = {
     deckSource: {
       type: "enum",
-      label: "使用卡组",
+      label: "玩家卡组",
       options: [
         { label: "当前卡组（玩家在面板里组的）", value: "cached" },
         { label: "内置示例卡组", value: "starter" },
       ],
       default: "cached",
+    },
+    opponentDeckSource: {
+      type: "enum",
+      label: "对手卡组",
+      options: [
+        { label: "与玩家相同（镜像）", value: "mirror" },
+        { label: "内置示例卡组", value: "starter" },
+        { label: "自定义（按卡名书写）", value: "custom" },
+      ],
+      default: "mirror",
+    },
+    opponentDeckSpec: {
+      type: "string",
+      label: "对手卡组内容（卡名*张数，逗号或换行分隔）",
+      multiline: true,
+      default: "",
+      visibleWhen: { field: "opponentDeckSource", equals: "custom" },
+    },
+    firstSide: {
+      type: "enum",
+      label: "先手",
+      options: [
+        { label: "玩家先攻", value: "player" },
+        { label: "对手先攻", value: "opponent" },
+      ],
+      default: "player",
     },
     openPanel: {
       type: "boolean",
@@ -720,9 +804,15 @@ export class StartBattleBlock extends BlockExtension {
       return;
     }
 
+    const opponentDeck = resolveOpponentDeck(cards, p);
+    const firstSide: SideId = p.firstSide === "opponent" ? "opponent" : "player";
+
     const rules = readRules(ctx);
-    setDuelState(startDuel(cards, deck, rules));
-    console.log(`[决斗卡牌工坊] 开始战斗：使用${note}，共 ${deck.length} 张。`);
+    setDuelState(startDuel(cards, deck, rules, opponentDeck, firstSide));
+    console.log(
+      `[决斗卡牌工坊] 开始战斗：玩家使用${note}（${deck.length} 张），` +
+        `${firstSide === "opponent" ? "对手先攻" : "玩家先攻"}。`,
+    );
 
     const openPanel = p.openPanel !== false;
     let waitForEnd = p.waitForEnd !== false;

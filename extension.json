@@ -2,7 +2,7 @@
   "id": "user.duel-card-forge",
   "name": "决斗卡牌工坊",
   "author": "卡牌作战自定义",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "entry": "dist/index.mjs",
   "hasProgram": true,
   "sdkVersion": "^2.0.0",

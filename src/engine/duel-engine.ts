@@ -222,27 +222,40 @@ export function startDuel(
   libraryCards: CardDefinition[],
   deck: DeckEntry[],
   rules: DuelRules,
+  opponentDeck?: DeckEntry[],
+  firstSide: SideId = "player",
 ): DuelState {
   const library = new Map(libraryCards.map((card) => [card.id, card]));
-  const base: DuelState = {
+  const enemyDeck =
+    opponentDeck && opponentDeck.length > 0 ? opponentDeck : deck;
+  let state: DuelState = {
     rules,
     turn: 1,
-    active: "player",
+    active: firstSide,
     phase: "main",
     player: makeSide(library, deck, rules),
-    opponent: makeSide(library, deck, rules),
+    opponent: makeSide(library, enemyDeck, rules),
     summonsThisTurn: 0,
     attackLocked: !rules.firstTurnAttack,
     log: [],
   };
-  let state: DuelState = base;
   log(state, "info", "决斗开始！");
   const playerDraw = drawCards(state, "player", rules.startingHand);
   state = playerDraw.state;
   const opponentDraw = drawCards(state, "opponent", rules.startingHand);
   state = opponentDraw.state;
   log(state, "info", `双方各抽了 ${rules.startingHand} 张起始手牌。`);
-  return state;
+
+  // 玩家先攻：保持现状，直接由玩家开始第一回合（首回合不抽牌）。
+  if (firstSide === "player") return state;
+
+  // 对手先攻：对手打第一个回合（首回合同样不抽牌），随后把回合交给玩家。
+  log(state, "warn", "对手获得先攻。");
+  state = beginTurn(state, "opponent", true);
+  state = { ...state, attackLocked: !rules.firstTurnAttack };
+  if (state.winner) return state;
+  if (rules.aiEnabled) return runAiTurn(state);
+  return handOverToPlayer(state);
 }
 
 // ---------------------------------------------------------------------------
@@ -891,7 +904,7 @@ function runAiTurn(state: DuelState): DuelState {
     if (current.opponent.hand.length === 0) break;
   }
 
-  if (!current.winner) {
+  if (!current.winner && !current.attackLocked) {
     current = { ...current, phase: "battle" };
     let safety = 0;
     while (!current.winner && safety < 12) {

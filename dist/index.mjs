@@ -790,7 +790,7 @@ function sideName(side) {
 function beginTurn(state, side, first) {
   let current = cloneState(state);
   const s = sideOf(current, side);
-  const energy = Math.min(current.rules.energyMax, s.energy + current.rules.energyPerTurn);
+  const energy = first ? Math.min(current.rules.energyMax, current.rules.energyStart) : Math.min(current.rules.energyMax, s.energy + current.rules.energyPerTurn);
   current = withSide(current, side, {
     ...s,
     energy,
@@ -798,7 +798,7 @@ function beginTurn(state, side, first) {
       (m) => m ? { ...m, attacksUsed: 0, changedPosition: false } : null
     )
   });
-  if (current.rules.drawPerTurn > 0) {
+  if (!first && current.rules.drawPerTurn > 0) {
     const result = drawCards(current, side, current.rules.drawPerTurn);
     current = result.state;
     if (result.drawn > 0) {
@@ -811,27 +811,33 @@ function beginTurn(state, side, first) {
   }
   return { ...current, attackLocked: false };
 }
-function startDuel(libraryCards, deck, rules) {
+function startDuel(libraryCards, deck, rules, opponentDeck, firstSide = "player") {
   const library = new Map(libraryCards.map((card) => [card.id, card]));
-  const base = {
+  const enemyDeck = opponentDeck && opponentDeck.length > 0 ? opponentDeck : deck;
+  let state = {
     rules,
     turn: 1,
-    active: "player",
+    active: firstSide,
     phase: "main",
     player: makeSide(library, deck, rules),
-    opponent: makeSide(library, deck, rules),
+    opponent: makeSide(library, enemyDeck, rules),
     summonsThisTurn: 0,
     attackLocked: !rules.firstTurnAttack,
     log: []
   };
-  let state = base;
   log(state, "info", "决斗开始！");
   const playerDraw = drawCards(state, "player", rules.startingHand);
   state = playerDraw.state;
   const opponentDraw = drawCards(state, "opponent", rules.startingHand);
   state = opponentDraw.state;
   log(state, "info", `双方各抽了 ${rules.startingHand} 张起始手牌。`);
-  return state;
+  if (firstSide === "player") return state;
+  log(state, "warn", "对手获得先攻。");
+  state = beginTurn(state, "opponent", true);
+  state = { ...state, attackLocked: !rules.firstTurnAttack };
+  if (state.winner) return state;
+  if (rules.aiEnabled) return runAiTurn(state);
+  return handOverToPlayer(state);
 }
 function slotOfMonster(side, uid) {
   return side.monsters.findIndex((m) => m !== null && m.uid === uid);
@@ -1302,7 +1308,7 @@ function endTurn(state) {
   );
   current = withSide(current, "player", { ...sideOf(current, "player"), monsters: cleared });
   current = { ...current, active: "opponent", phase: "main", summonsThisTurn: 0 };
-  current = beginTurn(current, "opponent");
+  current = beginTurn(current, "opponent", false);
   if (current.rules.aiEnabled && !current.winner) {
     current = runAiTurn(current);
   } else if (!current.rules.aiEnabled) {
@@ -1323,7 +1329,7 @@ function handOverToPlayer(state) {
     phase: "main",
     summonsThisTurn: 0
   };
-  next = beginTurn(next, "player");
+  next = beginTurn(next, "player", false);
   log(next, "info", "你的回合开始。");
   return next;
 }
@@ -1376,7 +1382,7 @@ function runAiTurn(state) {
     guard += 1;
     if (current.opponent.hand.length === 0) break;
   }
-  if (!current.winner) {
+  if (!current.winner && !current.attackLocked) {
     current = { ...current, phase: "battle" };
     let safety = 0;
     while (!current.winner && safety < 12) {
@@ -5103,6 +5109,43 @@ function resolveDeck(cards, source) {
     note: source === "starter" ? "内置示例卡组" : "当前卡组为空（面板还没打开过），已改用示例卡组"
   };
 }
+function parseDeckSpec(text, cards) {
+  const counts = /* @__PURE__ */ new Map();
+  const parts = text.split(/[,;，；\n]/).map((part) => part.trim()).filter(Boolean);
+  for (const part of parts) {
+    const matched = part.match(/^(.+?)(?:\s*[*x×]\s*(\d+))?$/);
+    if (!matched) continue;
+    const card = findCard(cards, matched[1].trim());
+    if (!card) {
+      console.warn(`[决斗卡牌工坊] 对手卡组：卡牌库里没有「${matched[1].trim()}」，已忽略。`);
+      continue;
+    }
+    const count = Math.max(1, Math.min(9, Number(matched[2] ?? 1) || 1));
+    counts.set(card.id, Math.min(9, (counts.get(card.id) ?? 0) + count));
+  }
+  return Array.from(counts.entries()).map(([cardId, count]) => ({
+    cardId,
+    count
+  }));
+}
+function resolveOpponentDeck(cards, p) {
+  const source = p.opponentDeckSource ?? "mirror";
+  if (source === "mirror") return void 0;
+  if (source === "starter") {
+    const starter = STARTER_DECK.filter(
+      (entry) => cards.some((card) => card.id === entry.cardId)
+    );
+    return starter.length > 0 ? starter : void 0;
+  }
+  const parsed = parseDeckSpec(p.opponentDeckSpec ?? "", cards);
+  if (parsed.length === 0) {
+    console.warn(
+      "[决斗卡牌工坊] 对手卡组：自定义内容为空或没匹配到卡牌，已改回镜像玩家卡组。"
+    );
+    return void 0;
+  }
+  return parsed;
+}
 function waitForDuelEnd() {
   const initial = getDuelState();
   if (!initial) return Promise.resolve("aborted");
@@ -5144,9 +5187,13 @@ const _StartBattleBlock = class _StartBattleBlock extends BlockExtension {
       console.warn("[决斗卡牌工坊] 开始战斗：没有可用的卡组，已跳过。");
       return;
     }
+    const opponentDeck = resolveOpponentDeck(cards, p);
+    const firstSide = p.firstSide === "opponent" ? "opponent" : "player";
     const rules = readRules(ctx);
-    setDuelState(startDuel(cards, deck, rules));
-    console.log(`[决斗卡牌工坊] 开始战斗：使用${note}，共 ${deck.length} 张。`);
+    setDuelState(startDuel(cards, deck, rules, opponentDeck, firstSide));
+    console.log(
+      `[决斗卡牌工坊] 开始战斗：玩家使用${note}（${deck.length} 张），${firstSide === "opponent" ? "对手先攻" : "玩家先攻"}。`
+    );
     const openPanel = p.openPanel !== false;
     let waitForEnd = p.waitForEnd !== false;
     if (openPanel) {
@@ -5184,17 +5231,43 @@ const _StartBattleBlock = class _StartBattleBlock extends BlockExtension {
 };
 _StartBattleBlock.type = "dcf-start-battle";
 _StartBattleBlock.title = "开始战斗：在剧情中开一局";
-_StartBattleBlock.description = "用面板里的卡组（或示例卡组）开始一场决斗，自动打开面板；可等分出胜负后再继续剧情，并把结果写入变量供 If 分支使用。";
+_StartBattleBlock.description = "用面板里的卡组（或指定卡组）开始一场决斗，可指定对手卡组与先后手；自动打开面板，可等分出胜负后再继续剧情，并把结果写入变量供 If 分支使用。";
 _StartBattleBlock.category = "卡牌工坊";
 _StartBattleBlock.schema = {
   deckSource: {
     type: "enum",
-    label: "使用卡组",
+    label: "玩家卡组",
     options: [
       { label: "当前卡组（玩家在面板里组的）", value: "cached" },
       { label: "内置示例卡组", value: "starter" }
     ],
     default: "cached"
+  },
+  opponentDeckSource: {
+    type: "enum",
+    label: "对手卡组",
+    options: [
+      { label: "与玩家相同（镜像）", value: "mirror" },
+      { label: "内置示例卡组", value: "starter" },
+      { label: "自定义（按卡名书写）", value: "custom" }
+    ],
+    default: "mirror"
+  },
+  opponentDeckSpec: {
+    type: "string",
+    label: "对手卡组内容（卡名*张数，逗号或换行分隔）",
+    multiline: true,
+    default: "",
+    visibleWhen: { field: "opponentDeckSource", equals: "custom" }
+  },
+  firstSide: {
+    type: "enum",
+    label: "先手",
+    options: [
+      { label: "玩家先攻", value: "player" },
+      { label: "对手先攻", value: "opponent" }
+    ],
+    default: "player"
   },
   openPanel: {
     type: "boolean",

@@ -28,10 +28,12 @@ function transpile(relSrc, relOut) {
 }
 
 const engineUrl = transpile("src/engine/duel-engine.ts", "engine.mjs");
+const realtimeUrl = transpile("src/engine/realtime-engine.ts", "realtime.mjs");
 const cardsUrl = transpile("src/data/starter-cards.ts", "starter.mjs");
 const typesUrl = transpile("src/types.ts", "types.mjs");
 
 const engine = await import(engineUrl);
+const rt = await import(realtimeUrl);
 const { STARTER_CARDS, STARTER_DECK } = await import(cardsUrl);
 const { DEFAULT_RULES } = await import(typesUrl);
 
@@ -67,6 +69,8 @@ const mk = (card, position = "attack") => ({
   tempDef: 0,
   attacksUsed: 0,
   changedPosition: false,
+  damage: 0,
+  evolved: false,
 });
 
 const dragon = {
@@ -443,6 +447,201 @@ truthy(
   rush.player.lp < rushRules.startingLp,
   `先攻可攻击：AI 首回合造成伤害（玩家 LP ${rush.player.lp}）`,
 );
+
+// ---------------------------------------------------------------------------
+// 影之诗模式
+// ---------------------------------------------------------------------------
+const svRules = {
+  ...DEFAULT_RULES,
+  battleMode: "shadowverse",
+  startingLp: 20,
+  startingHand: 3,
+  monsterZones: 5,
+  spellZones: 0,
+  energyStart: 10,
+  energyMax: 10,
+  aiEnabled: false,
+  evolvePoints: 3,
+  evolveAttack: 2,
+  evolveDefense: 2,
+  firstTurnAttack: true,
+};
+const tankA = {
+  ...dragon,
+  id: "t_tank_a",
+  name: "测试重装A",
+  attack: 1000,
+  defense: 5000,
+};
+const tankB = {
+  ...dragon,
+  id: "t_tank_b",
+  name: "测试重装B",
+  attack: 500,
+  defense: 1500,
+};
+const svLibrary = [...library, tankA, tankB];
+
+let sv = engine.startDuel(svLibrary, deckOf(tankA, 6), svRules);
+sv = {
+  ...sv,
+  phase: "battle",
+  attackLocked: false,
+  player: { ...sv.player, monsters: [mk(tankA), null, null, null, null] },
+  opponent: { ...sv.opponent, monsters: [mk(tankB), null, null, null, null] },
+};
+let svResult = engine.declareAttack(sv, sv.player.monsters[0].uid, sv.opponent.monsters[0].uid);
+sv = svResult.state;
+eq(sv.opponent.monsters[0].damage, 1000, "影之诗：目标累计 1000 伤害");
+eq(sv.player.monsters[0].damage, 500, "影之诗：攻击方也受到反击伤害");
+eq(engine.monsterHealth(sv.opponent.monsters[0]), 500, "影之诗：生命跨回合保留（1500-1000）");
+
+// 再打一次：生命归零则破坏
+sv = {
+  ...sv,
+  player: {
+    ...sv.player,
+    monsters: [{ ...sv.player.monsters[0], attacksUsed: 0 }, null, null, null, null],
+  },
+};
+svResult = engine.declareAttack(sv, sv.player.monsters[0].uid, sv.opponent.monsters[0].uid);
+sv = svResult.state;
+eq(sv.opponent.monsters[0], null, "影之诗：生命归零的随从被破坏");
+
+// 可以直接攻击玩家（即使对面有随从）
+const weakA = {
+  ...dragon,
+  id: "t_weak_a",
+  name: "测试轻击",
+  attack: 15,
+  defense: 5000,
+};
+let svFace = engine.startDuel(svLibrary, deckOf(tankA, 6), svRules);
+svFace = {
+  ...svFace,
+  phase: "battle",
+  attackLocked: false,
+  player: { ...svFace.player, monsters: [mk(weakA), null, null, null, null] },
+  opponent: { ...svFace.opponent, monsters: [mk(tankB), null, null, null, null] },
+};
+svResult = engine.declareAttack(svFace, svFace.player.monsters[0].uid, null);
+truthy(svResult.ok, "影之诗：对面有随从也能直接攻击玩家");
+eq(svResult.state.opponent.lp, 20 - 15, "影之诗：直接攻击扣主战者生命");
+
+// 进化
+let svEvolve = engine.startDuel(svLibrary, deckOf(tankA, 6), svRules);
+svEvolve = {
+  ...svEvolve,
+  player: { ...svEvolve.player, monsters: [mk(tankA), null, null, null, null] },
+};
+const evolveResult = engine.evolveMonster(svEvolve, svEvolve.player.monsters[0].uid);
+truthy(evolveResult.ok, "影之诗：进化成功");
+const evolved = evolveResult.state.player.monsters[0];
+eq(engine.effectiveAttack(evolved), 1002, "影之诗：进化后攻击 +2");
+eq(engine.monsterHealth(evolved), 5002, "影之诗：进化后生命 +2");
+eq(evolveResult.state.evolve.player, 2, "影之诗：进化点 -1");
+const evolveAgain = engine.evolveMonster(evolveResult.state, evolved.uid);
+eq(evolveAgain.ok, false, "影之诗：同一随从不能进化两次");
+
+// ---------------------------------------------------------------------------
+// 即时对战模式
+// ---------------------------------------------------------------------------
+const rtRules = { ...DEFAULT_RULES, battleMode: "realtime", elixirMax: 10, aiEnabled: false };
+let rs = rt.startRealtime(library, deckOf(dragon, 8), rtRules);
+eq(rs.towers.length, 6, "即时：双方各 2 塔 + 1 国王塔");
+eq(rs.hand.player.length, 4, "即时：起手 4 张");
+eq(rs.elixir.player >= 5, true, "即时：开局有初始圣水");
+
+const playableIndex = rs.hand.player.findIndex(
+  (card) => card.cost <= rs.elixir.player,
+);
+truthy(playableIndex >= 0, "即时：有一张付得起的牌");
+const elixirBefore = rs.elixir.player;
+const deployResult = rt.deploy(rs, "player", playableIndex, 0);
+truthy(deployResult.ok, "即时：部署成功");
+rs = deployResult.state;
+eq(rs.units.length, 1, "即时：场上出现 1 个单位");
+truthy(rs.elixir.player < elixirBefore, "即时：部署扣除圣水");
+eq(rs.hand.player.length, 4, "即时：部署后补牌");
+
+const unit = rs.units[0];
+const xBefore = unit.x;
+rs = rt.tick(rs, 500);
+const moved = rs.units.find((u) => u.uid === unit.uid);
+truthy(moved && moved.x > xBefore, "即时：单位向敌方推进");
+
+// 单位靠近敌方塔后能造成伤害
+const strongUnitCard = {
+  ...dragon,
+  id: "t_rt_strong",
+  name: "测试攻城兽",
+  attack: 500,
+  defense: 1000,
+  moveSpeed: 1,
+  attackIntervalMs: 500,
+  range: 1,
+};
+let rsSolo = rt.startRealtime(library, deckOf(dragon, 8), rtRules);
+rsSolo = {
+  ...rsSolo,
+  units: [
+    {
+      uid: "u_test",
+      side: "player",
+      lane: 0,
+      card: strongUnitCard,
+      hp: 1000,
+      maxHp: 1000,
+      x: 6.2,
+      cooldown: 0,
+    },
+  ],
+};
+const enemyLaneTower = rsSolo.towers.find(
+  (t) => t.side === "opponent" && t.lane === 0,
+);
+const towerHpBefore = enemyLaneTower.hp;
+rsSolo = rt.tick(rsSolo, 600);
+const towerAfter = rsSolo.towers.find((t) => t.side === "opponent" && t.lane === 0);
+truthy(towerAfter.hp < towerHpBefore, "即时：单位攻击敌方防御塔");
+
+// 推掉普通塔 → 皇冠 +1，国王塔才可被攻击
+let rsBreak = rt.startRealtime(library, deckOf(dragon, 8), rtRules);
+rsBreak = {
+  ...rsBreak,
+  towers: rsBreak.towers.map((t) =>
+    t.side === "opponent" && t.lane === 0 ? { ...t, hp: 10 } : t,
+  ),
+  units: [
+    {
+      uid: "u_break",
+      side: "player",
+      lane: 0,
+      card: strongUnitCard,
+      hp: 1000,
+      maxHp: 1000,
+      x: 6.2,
+      cooldown: 0,
+    },
+  ],
+};
+rsBreak = rt.tick(rsBreak, 600);
+eq(rsBreak.crowns.player, 1, "即时：推掉普通塔获得 1 皇冠");
+eq(
+  rsBreak.towers.find((t) => t.side === "opponent" && t.lane === 0).alive,
+  false,
+  "即时：普通塔被摧毁",
+);
+
+// 时间到按皇冠判定
+let rsTime = rt.startRealtime(library, deckOf(dragon, 8), rtRules);
+rsTime = {
+  ...rsTime,
+  timeMs: rsTime.timeLimitMs - 50,
+  crowns: { player: 2, opponent: 0 },
+};
+rsTime = rt.tick(rsTime, 100);
+eq(rsTime.winner, "player", "即时：时间到按皇冠数判定胜负");
 
 console.log(`\n${checks - failures}/${checks} 项通过`);
 if (failures > 0) process.exitCode = 1;

@@ -12,9 +12,11 @@ import {
 import { STARTER_CARDS, STARTER_DECK } from "../data/starter-cards";
 import {
   getDuelState,
+  getRealtimeState,
   setCachedDeck,
   setDuelState,
   setPanelOpen,
+  setRealtimeState,
   subscribeDuelState,
 } from "../state/duel-store";
 import {
@@ -28,8 +30,15 @@ import {
   summonMonster,
   type DuelResult,
   type MonsterPosition,
+  evolveMonster,
 } from "../engine/duel-engine";
+import {
+  deploy,
+  startRealtime,
+  tick,
+} from "../engine/realtime-engine";
 import { BattleBoard } from "./battle-board";
+import { RealtimeBoard } from "./realtime-board";
 import { CardEditor } from "./card-editor";
 import { DeckBuilder } from "./deck-builder";
 import { RulesEditor } from "./rules-editor";
@@ -138,6 +147,11 @@ export function DuelApp(props: DuelAppProps): React.ReactElement {
     subscribeDuelState,
     getDuelState,
     getDuelState,
+  );
+  const realtime = useSyncExternalStore(
+    subscribeDuelState,
+    getRealtimeState,
+    getRealtimeState,
   );
 
   const cardsState = useMemo<{ list: CardDefinition[]; error: string | null }>(() => {
@@ -291,6 +305,17 @@ export function DuelApp(props: DuelAppProps): React.ReactElement {
     }
   };
 
+  const startRealtimeBattle = () => {
+    const validDeck = deck.filter((entry) =>
+      cards.some((card) => card.id === entry.cardId),
+    );
+    if (validDeck.length === 0) {
+      setNotice("卡组为空，先到「卡组」页准备卡组。");
+      return;
+    }
+    setRealtimeState(startRealtime(cards, validDeck, rules));
+  };
+
   const handleStart = () => {
     const validDeck = deck.filter((entry) =>
       cards.some((card) => card.id === entry.cardId),
@@ -299,7 +324,28 @@ export function DuelApp(props: DuelAppProps): React.ReactElement {
       setNotice("卡组为空，先到「卡组」页准备卡组。");
       return;
     }
+    if (rules.battleMode === "realtime") {
+      setRealtimeState(startRealtime(cards, validDeck, rules));
+      return;
+    }
     setDuelState(startDuel(cards, validDeck, rules));
+  };
+
+  const handleRealtimeTick = (deltaMs: number) => {
+    const currentRt = getRealtimeState();
+    if (!currentRt || currentRt.winner) return;
+    setRealtimeState(tick(currentRt, deltaMs));
+  };
+
+  const handleRealtimeDeploy = (handIndex: number, lane: number) => {
+    const currentRt = getRealtimeState();
+    if (!currentRt) return;
+    const result = deploy(currentRt, "player", handIndex, lane);
+    if (!result.ok) {
+      if (result.message) setNotice(result.message);
+      return;
+    }
+    setRealtimeState(result.state);
   };
 
   const currentCards = cards;
@@ -416,26 +462,39 @@ export function DuelApp(props: DuelAppProps): React.ReactElement {
         ) : null}
 
         {tab === "battle" ? (
-          <BattleBoard
-            state={duel}
-            deckCount={deckTotal}
-            deckValid={deckValid}
-            wins={wins}
-            losses={losses}
-            onStart={handleStart}
-            onSummon={(handUid, position, tributes) =>
-              run(summonMonster(duel!, handUid, position as MonsterPosition, tributes))
-            }
-            onActivateSpell={(handUid) => run(activateSpell(duel!, handUid))}
-            onSetTrap={(handUid) => run(setTrap(duel!, handUid))}
-            onAttack={(attackerUid, targetUid) =>
-              run(declareAttack(duel!, attackerUid, targetUid))
-            }
-            onChangePosition={(uid) => run(changePosition(duel!, uid))}
-            onStartBattle={() => run(startBattlePhase(duel!))}
-            onEndTurn={() => run(endTurn(duel!))}
-            onExit={() => setDuelState(null)}
-          />
+          rules.battleMode === "realtime" ? (
+            <RealtimeBoard
+              state={realtime}
+              deckCount={deckTotal}
+              deckValid={deckValid}
+              onStart={startRealtimeBattle}
+              onTick={handleRealtimeTick}
+              onDeploy={handleRealtimeDeploy}
+              onExit={() => setRealtimeState(null)}
+            />
+          ) : (
+            <BattleBoard
+              state={duel}
+              deckCount={deckTotal}
+              deckValid={deckValid}
+              wins={wins}
+              losses={losses}
+              onStart={handleStart}
+              onSummon={(handUid, position, tributes) =>
+                run(summonMonster(duel!, handUid, position as MonsterPosition, tributes))
+              }
+              onActivateSpell={(handUid) => run(activateSpell(duel!, handUid))}
+              onSetTrap={(handUid) => run(setTrap(duel!, handUid))}
+              onAttack={(attackerUid, targetUid) =>
+                run(declareAttack(duel!, attackerUid, targetUid))
+              }
+              onChangePosition={(uid) => run(changePosition(duel!, uid))}
+              onStartBattle={() => run(startBattlePhase(duel!))}
+              onEndTurn={() => run(endTurn(duel!))}
+              onEvolve={(uid) => run(evolveMonster(duel!, uid))}
+              onExit={() => setDuelState(null)}
+            />
+          )
         ) : null}
       </main>
 

@@ -42,10 +42,13 @@ import {
 import {
   getCachedDeck,
   getDuelState,
+  getRealtimeState,
   isPanelOpen,
   setDuelState,
+  setRealtimeState,
   subscribeDuelState,
 } from "../state/duel-store";
+import { startRealtime } from "../engine/realtime-engine";
 
 // ---------------------------------------------------------------------------
 // 公共工具
@@ -727,6 +730,44 @@ function waitForDuelEnd(): Promise<
   });
 }
 
+/** 即时对战的等待：结束条件与回合制一致（分出胜负、面板被关、状态被清空）。 */
+function waitForRealtimeEnd(): Promise<
+  "player" | "opponent" | "draw" | "aborted"
+> {
+  const initial = getRealtimeState();
+  if (!initial) return Promise.resolve("aborted");
+  if (initial.winner) return Promise.resolve(initial.winner);
+  return new Promise((resolve) => {
+    let settled = false;
+    let sawPanelOpen = isPanelOpen();
+    let unsubscribe: (() => void) | null = null;
+
+    function finish(result: "player" | "opponent" | "draw" | "aborted"): void {
+      if (settled) return;
+      settled = true;
+      unsubscribe?.();
+      resolve(result);
+    }
+
+    unsubscribe = subscribeDuelState(() => {
+      const state = getRealtimeState();
+      if (state?.winner) {
+        finish(state.winner);
+        return;
+      }
+      if (!state) {
+        finish("aborted");
+        return;
+      }
+      if (isPanelOpen()) {
+        sawPanelOpen = true;
+        return;
+      }
+      if (sawPanelOpen) finish("aborted");
+    });
+  });
+}
+
 export class StartBattleBlock extends BlockExtension {
   static readonly type = "dcf-start-battle";
   static readonly title = "开始战斗：在剧情中开一局";
@@ -808,11 +849,19 @@ export class StartBattleBlock extends BlockExtension {
     const firstSide: SideId = p.firstSide === "opponent" ? "opponent" : "player";
 
     const rules = readRules(ctx);
-    setDuelState(startDuel(cards, deck, rules, opponentDeck, firstSide));
-    console.log(
-      `[决斗卡牌工坊] 开始战斗：玩家使用${note}（${deck.length} 张），` +
-        `${firstSide === "opponent" ? "对手先攻" : "玩家先攻"}。`,
-    );
+    const realtime = rules.battleMode === "realtime";
+    if (realtime) {
+      setRealtimeState(startRealtime(cards, deck, rules, opponentDeck));
+      console.log(
+        `[决斗卡牌工坊] 开始战斗（即时模式）：玩家使用${note}（${deck.length} 张）。`,
+      );
+    } else {
+      setDuelState(startDuel(cards, deck, rules, opponentDeck, firstSide));
+      console.log(
+        `[决斗卡牌工坊] 开始战斗：玩家使用${note}（${deck.length} 张），` +
+          `${firstSide === "opponent" ? "对手先攻" : "玩家先攻"}。`,
+      );
+    }
 
     const openPanel = p.openPanel !== false;
     let waitForEnd = p.waitForEnd !== false;
@@ -838,7 +887,9 @@ export class StartBattleBlock extends BlockExtension {
 
     if (!waitForEnd) return;
 
-    const result = await waitForDuelEnd();
+    const result = realtime
+      ? await waitForRealtimeEnd()
+      : await waitForDuelEnd();
     const variable = (p.resultVariable ?? "").trim() || "duelResult";
     try {
       ctx.variables.set(variable, result);

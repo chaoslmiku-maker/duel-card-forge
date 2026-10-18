@@ -8,6 +8,7 @@ import { DuelApp } from "../src/ui/app";
 import { BattleBoard } from "../src/ui/battle-board";
 import { DeckBuilder } from "../src/ui/deck-builder";
 import { RulesEditor } from "../src/ui/rules-editor";
+import { RealtimeBoard } from "../src/ui/realtime-board";
 import { STARTER_CARDS, STARTER_DECK } from "../src/data/starter-cards";
 import { DEFAULT_RULES, type DeckEntry } from "../src/types";
 import {
@@ -15,6 +16,7 @@ import {
   type DuelState,
   type MonsterPosition,
 } from "../src/engine/duel-engine";
+import { startRealtime, type RtState } from "../src/engine/realtime-engine";
 import { PreviewProvider, type PreviewContext } from "./sdk-shim";
 
 const settingsStore: Record<string, string> = { cardsJson: "", rulesJson: "" };
@@ -181,8 +183,197 @@ function DemoBattle(): React.ReactElement {
       onChangePosition={noop}
       onStartBattle={noop}
       onEndTurn={noop}
+      onEvolve={noop}
       onExit={noop}
     />
+  );
+}
+
+function DemoRealtime(): React.ReactElement {
+  const state = React.useMemo<RtState>(() => {
+    const rules = {
+      ...DEFAULT_RULES,
+      battleMode: "realtime" as const,
+      elixirMax: 10,
+      aiEnabled: false,
+      elixirRegenMs: 2800,
+    };
+    const base = startRealtime(STARTER_CARDS, STARTER_DECK, rules);
+    const card = (index: number) => STARTER_CARDS[index];
+    return {
+      ...base,
+      elixir: { player: 7, opponent: 4 },
+      timeMs: 52000,
+      crowns: { player: 1, opponent: 0 },
+      hand: {
+        player: [card(0), card(2), card(13), card(16)],
+        opponent: [card(3), card(4), card(6), card(9)],
+      },
+      towers: base.towers.map((tower) =>
+        tower.side === "opponent" && tower.lane === 1
+          ? { ...tower, alive: false, hp: 0 }
+          : tower.side === "opponent" && tower.lane === 0
+            ? { ...tower, hp: 720 }
+            : tower,
+      ),
+      units: [
+        {
+          uid: "rt_p1",
+          side: "player",
+          lane: 0,
+          card: card(0),
+          hp: 2400,
+          maxHp: 2500,
+          x: 5.4,
+          cooldown: 0,
+        },
+        {
+          uid: "rt_p2",
+          side: "player",
+          lane: 1,
+          card: card(3),
+          hp: 900,
+          maxHp: 1200,
+          x: 7.6,
+          cooldown: 0,
+        },
+        {
+          uid: "rt_e1",
+          side: "opponent",
+          lane: 0,
+          card: card(4),
+          hp: 1100,
+          maxHp: 1500,
+          x: 4.2,
+          cooldown: 0,
+        },
+        {
+          uid: "rt_e2",
+          side: "opponent",
+          lane: 1,
+          card: card(2),
+          hp: 1800,
+          maxHp: 2000,
+          x: 6.1,
+          cooldown: 0,
+        },
+      ],
+      log: [
+        { id: "r1", tone: "info", text: "即时对战开始：圣水会随时间回复。" },
+        { id: "r2", tone: "good", text: "你推掉了对手右路防御塔。" },
+      ],
+    };
+  }, []);
+
+  const noop = () => undefined;
+  return (
+    <div style={{ padding: 12, height: "100%", boxSizing: "border-box" }}>
+      <RealtimeBoard
+        state={state}
+        deckCount={36}
+        deckValid
+        onStart={noop}
+        onTick={noop}
+        onDeploy={noop}
+        onExit={noop}
+      />
+    </div>
+  );
+}
+
+function DemoSV(): React.ReactElement {
+  const state = React.useMemo<DuelState>(() => {
+    const rules = {
+      ...DEFAULT_RULES,
+      battleMode: "shadowverse" as const,
+      startingLp: 20,
+      energyStart: 6,
+      energyMax: 10,
+      monsterZones: 5,
+      spellZones: 0,
+      aiEnabled: false,
+      evolvePoints: 2,
+    };
+    const base = startDuel(STARTER_CARDS, STARTER_DECK, rules);
+    const card = (index: number) => STARTER_CARDS[index];
+    const follower = (
+      uid: string,
+      index: number,
+      x: string,
+      hp: number,
+    ) => ({
+      uid,
+      card: card(index),
+      position: "attack" as const,
+      atkMod: 0,
+      defMod: 0,
+      tempAtk: 0,
+      tempDef: 0,
+      attacksUsed: 0,
+      changedPosition: false,
+      damage: hp,
+      evolved: false,
+    });
+    return {
+      ...base,
+      turn: 4,
+      phase: "battle",
+      attackLocked: false,
+      player: {
+        ...base.player,
+        lp: 16,
+        energy: 6,
+        monsters: [
+          follower("sv_p1", 0, "a", 0),
+          follower("sv_p2", 4, "b", 900),
+          null,
+          null,
+          null,
+        ],
+        hand: [12, 13, 14, 9].map((index, i) => ({
+          uid: `sv_h${i}`,
+          card: card(index),
+        })),
+      },
+      opponent: {
+        ...base.opponent,
+        lp: 12,
+        monsters: [
+          follower("sv_e1", 5, "c", 600),
+          follower("sv_e2", 7, "d", 300),
+          null,
+          null,
+          null,
+        ],
+      },
+      log: [
+        { id: "s1", tone: "info", text: "影之诗模式：主战者 20 生命。" },
+        { id: "s2", tone: "good", text: "你进化了 苍蓝星龙（+2/+2）。" },
+      ],
+    };
+  }, []);
+
+  const noop = () => undefined;
+  return (
+    <div style={{ padding: 12, height: "100%", boxSizing: "border-box" }}>
+      <BattleBoard
+        state={state}
+        deckCount={36}
+        deckValid
+        wins={0}
+        losses={0}
+        onStart={noop}
+        onSummon={noop}
+        onActivateSpell={noop}
+        onSetTrap={noop}
+        onAttack={noop}
+        onChangePosition={noop}
+        onStartBattle={noop}
+        onEndTurn={noop}
+        onEvolve={noop}
+        onExit={noop}
+      />
+    </div>
   );
 }
 
@@ -212,11 +403,17 @@ function RulesDemo(): React.ReactElement {
   );
 }
 
-type View = "app" | "battle" | "deck" | "rules";
+type View = "app" | "battle" | "deck" | "rules" | "realtime" | "sv";
 
 function readView(): View {
   const hash = window.location.hash.replace(/^#/, "");
-  return hash === "battle" || hash === "deck" || hash === "rules" ? hash : "app";
+  return hash === "battle" ||
+    hash === "deck" ||
+    hash === "rules" ||
+    hash === "realtime" ||
+    hash === "sv"
+    ? hash
+    : "app";
 }
 
 function Root(): React.ReactElement {
@@ -230,6 +427,10 @@ function Root(): React.ReactElement {
     <PreviewProvider context={context}>
       {view === "battle" ? (
         <DemoBattle />
+      ) : view === "realtime" ? (
+        <DemoRealtime />
+      ) : view === "sv" ? (
+        <DemoSV />
       ) : view === "deck" ? (
         <DeckDemo />
       ) : view === "rules" ? (

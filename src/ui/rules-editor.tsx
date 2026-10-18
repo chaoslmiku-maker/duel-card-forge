@@ -1,7 +1,20 @@
 import React from "react";
-import type { DuelRules } from "../types";
-import { Btn, Empty, Field, NumInput, Panel, Toggle } from "./kit";
+import {
+  BATTLE_MODE_LABELS,
+  BATTLE_MODE_PRESETS,
+  type BattleMode,
+  type DuelRules,
+} from "../types";
+import { Btn, Chip, Empty, Field, NumInput, Panel, Toggle } from "./kit";
 import { colors } from "./theme";
+
+const MODE_HINTS: Record<BattleMode, string> = {
+  duel: "回合制：攻守表示、祭品召唤、攻对攻/守对守的破坏判定，8000 LP。",
+  shadowverse:
+    "影之诗风：主战者 20 生命，费用（PP）每回合 +1 上限 10，随从有生命值、伤害跨回合保留，可用进化点让随从 +2/+2。",
+  realtime:
+    "即时对战：圣水随时间回复，两条兵线自动推进，先摧毁对方国王塔者胜；卡牌的攻击力=伤害、守备力=生命。",
+};
 
 export function RulesEditor(props: {
   rules: DuelRules;
@@ -26,6 +39,34 @@ export function RulesEditor(props: {
         alignContent: "start",
       }}
     >
+      <div style={{ gridColumn: "1 / -1" }}>
+        <Panel title="战斗模式" subtitle="切换模式会套用该模式的推荐规则">
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {(Object.keys(BATTLE_MODE_LABELS) as BattleMode[]).map((mode) => (
+              <Chip
+                key={mode}
+                active={rules.battleMode === mode}
+                onClick={() =>
+                  onChange({ ...rules, ...BATTLE_MODE_PRESETS[mode] })
+                }
+              >
+                {BATTLE_MODE_LABELS[mode]}
+              </Chip>
+            ))}
+          </div>
+          <div
+            style={{
+              fontSize: 11,
+              color: colors.faint,
+              marginTop: 8,
+              lineHeight: 1.7,
+            }}
+          >
+            {MODE_HINTS[rules.battleMode]}
+          </div>
+        </Panel>
+      </div>
+
       <Panel title="基础规则" subtitle="生命值与资源">
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <NumRow
@@ -201,6 +242,93 @@ export function RulesEditor(props: {
           />
         </div>
       </Panel>
+
+      {rules.battleMode !== "duel" ? (
+        <div style={{ gridColumn: "1 / -1" }}>
+          <Panel
+            title="模式专属设置"
+            subtitle={BATTLE_MODE_LABELS[rules.battleMode]}
+          >
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(3, minmax(0,1fr))",
+                gap: 12,
+              }}
+            >
+              {rules.battleMode === "shadowverse" ? (
+                <>
+                  <NumRow
+                    label="进化点"
+                    hint="每方可用次数"
+                    value={rules.evolvePoints}
+                    min={0}
+                    max={9}
+                    onChange={(value) => set("evolvePoints", value)}
+                  />
+                  <NumRow
+                    label="进化攻击加成"
+                    value={rules.evolveAttack}
+                    min={0}
+                    max={20}
+                    onChange={(value) => set("evolveAttack", value)}
+                  />
+                  <NumRow
+                    label="进化生命加成"
+                    value={rules.evolveDefense}
+                    min={0}
+                    max={20}
+                    onChange={(value) => set("evolveDefense", value)}
+                  />
+                </>
+              ) : (
+                <>
+                  <NumRow
+                    label="圣水上限"
+                    value={rules.elixirMax}
+                    min={1}
+                    max={20}
+                    onChange={(value) => set("elixirMax", value)}
+                  />
+                  <NumRow
+                    label="圣水回复（毫秒/点）"
+                    hint="越小回复越快"
+                    value={rules.elixirRegenMs}
+                    min={300}
+                    max={20000}
+                    step={100}
+                    onChange={(value) => set("elixirRegenMs", value)}
+                  />
+                  <NumRow
+                    label="对局时长（秒）"
+                    value={rules.matchSeconds}
+                    min={30}
+                    max={900}
+                    step={10}
+                    onChange={(value) => set("matchSeconds", value)}
+                  />
+                  <NumRow
+                    label="普通塔生命"
+                    value={rules.towerHp}
+                    min={100}
+                    max={99999}
+                    step={100}
+                    onChange={(value) => set("towerHp", value)}
+                  />
+                  <NumRow
+                    label="国王塔生命"
+                    value={rules.kingTowerHp}
+                    min={100}
+                    max={99999}
+                    step={100}
+                    onChange={(value) => set("kingTowerHp", value)}
+                  />
+                </>
+              )}
+            </div>
+          </Panel>
+        </div>
+      ) : null}
 
       <div style={{ gridColumn: "1 / -1" }}>
         <Panel

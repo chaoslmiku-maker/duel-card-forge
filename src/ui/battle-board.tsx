@@ -3,6 +3,7 @@ import type { CardDefinition } from "../types";
 import {
   effectiveAttack,
   effectiveDefense,
+  monsterHealth,
   summonBlocker,
   tributeRequirement,
   type DuelSide,
@@ -28,6 +29,7 @@ export function BattleBoard(props: {
   onChangePosition: (monsterUid: string) => void;
   onStartBattle: () => void;
   onEndTurn: () => void;
+  onEvolve: (monsterUid: string) => void;
   onExit: () => void;
 }): React.ReactElement {
   const { state } = props;
@@ -63,6 +65,7 @@ export function BattleBoard(props: {
   const opponent = state.opponent;
   const enemyHasMonsters = opponent.monsters.some((monster) => monster !== null);
   const myTurn = state.active === "player" && !state.winner;
+  const shadowverse = state.rules.battleMode === "shadowverse";
   const handCard = selectedHand
     ? player.hand.find((card) => card.uid === selectedHand)?.card ?? null
     : null;
@@ -156,6 +159,7 @@ export function BattleBoard(props: {
           monsters={opponent.monsters}
           traps={opponent.traps}
           highlight={attackMode}
+          shadowverse={shadowverse}
           onMonsterClick={handleEnemyMonsterClick}
         />
 
@@ -171,14 +175,16 @@ export function BattleBoard(props: {
               setSelectedMonster(null);
             }}
             directAttackEnabled={
-              state.rules.directAttackAllowed &&
-              (!enemyHasMonsters ||
-                Boolean(
-                  selectedMonsterObj?.card.keywords.includes("direct"),
-                ))
+              shadowverse ||
+              (state.rules.directAttackAllowed &&
+                (!enemyHasMonsters ||
+                  Boolean(
+                    selectedMonsterObj?.card.keywords.includes("direct"),
+                  )))
             }
             hasSelectedMonster={Boolean(selectedMonsterObj)}
             attackMode={attackMode}
+            evolvePoints={shadowverse ? state.evolve.player : undefined}
           />
 
           <ZoneRow
@@ -190,6 +196,7 @@ export function BattleBoard(props: {
             traps={player.traps}
             highlight={Boolean(pendingSummon)}
             selectedUid={selectedMonster}
+            shadowverse={shadowverse}
             tributeUids={tributes}
             onMonsterClick={(monster) => handleOwnMonsterClick(monster)}
           />
@@ -322,9 +329,15 @@ export function BattleBoard(props: {
             <span style={{ fontSize: 12, color: colors.text }}>
               {selectedMonsterObj.card.name}
               <span style={{ color: colors.faint, marginLeft: 6 }}>
-                攻 {effectiveAttack(selectedMonsterObj)} / 守{" "}
-                {effectiveDefense(selectedMonsterObj)} ·{" "}
-                {selectedMonsterObj.position === "attack" ? "攻击表示" : "守备表示"}
+                攻 {effectiveAttack(selectedMonsterObj)} /{" "}
+                {shadowverse
+                  ? `生命 ${monsterHealth(selectedMonsterObj)}`
+                  : `守 ${effectiveDefense(selectedMonsterObj)}`}
+                {shadowverse
+                  ? selectedMonsterObj.evolved
+                    ? " · 已进化"
+                    : ""
+                  : ` · ${selectedMonsterObj.position === "attack" ? "攻击表示" : "守备表示"}`}
               </span>
             </span>
             <div style={{ flex: 1 }} />
@@ -333,36 +346,75 @@ export function BattleBoard(props: {
             myTurn &&
             !state.attackLocked &&
             selectedMonsterObj.attacksUsed < (selectedMonsterObj.card.keywords.includes("double") ? 2 : 1) ? (
+              shadowverse ? (
+                <>
+                  <Btn
+                    size="sm"
+                    variant="gold"
+                    onClick={() => {
+                      props.onAttack(selectedMonsterObj.uid, null);
+                      setSelectedMonster(null);
+                    }}
+                  >
+                    攻击玩家
+                  </Btn>
+                  {enemyHasMonsters ? (
+                    <Btn size="sm" onClick={() => setAttackMode(true)}>
+                      攻击随从
+                    </Btn>
+                  ) : null}
+                </>
+              ) : (
+                <Btn
+                  size="sm"
+                  variant="gold"
+                  onClick={() => {
+                    if (enemyHasMonsters) setAttackMode(true);
+                    else {
+                      props.onAttack(selectedMonsterObj.uid, null);
+                      setSelectedMonster(null);
+                    }
+                  }}
+                >
+                  {enemyHasMonsters ? "选择攻击目标" : "直接攻击"}
+                </Btn>
+              )
+            ) : null}
+            {shadowverse ? (
               <Btn
                 size="sm"
-                variant="gold"
+                variant="primary"
+                disabled={
+                  !myTurn ||
+                  selectedMonsterObj.evolved ||
+                  state.evolve.player <= 0
+                }
                 onClick={() => {
-                  if (enemyHasMonsters) setAttackMode(true);
-                  else {
-                    props.onAttack(selectedMonsterObj.uid, null);
-                    setSelectedMonster(null);
-                  }
+                  props.onEvolve(selectedMonsterObj.uid);
+                  setSelectedMonster(null);
                 }}
               >
-                {enemyHasMonsters ? "选择攻击目标" : "直接攻击"}
+                进化（剩余 {state.evolve.player}）
               </Btn>
-            ) : null}
-            <Btn
-              size="sm"
-              onClick={() => {
-                props.onChangePosition(selectedMonsterObj.uid);
-                setSelectedMonster(null);
-              }}
-            >
-              改变表示形式
-            </Btn>
+            ) : (
+              <Btn
+                size="sm"
+                onClick={() => {
+                  props.onChangePosition(selectedMonsterObj.uid);
+                  setSelectedMonster(null);
+                }}
+              >
+                改变表示形式
+              </Btn>
+            )}
             <Btn size="sm" variant="quiet" onClick={() => setSelectedMonster(null)}>
               取消
             </Btn>
           </div>
         ) : (
           <div style={{ fontSize: 11.5, color: colors.faint }}>
-            点击手牌查看可执行的操作；点击自己的怪兽可以攻击或改变表示形式。
+            点击手牌查看可执行的操作；点击自己的怪兽可以攻击
+            {shadowverse ? "或进化" : "或改变表示形式"}。
           </div>
         )}
       </Panel>
@@ -587,6 +639,7 @@ function ZoneRow(props: {
   highlight?: boolean;
   selectedUid?: string | null;
   tributeUids?: string[];
+  shadowverse?: boolean;
   onMonsterClick?: (monster: FieldMonster) => void;
 }): React.ReactElement {
   const { monsters, traps, size } = props;
@@ -649,17 +702,27 @@ function ZoneRow(props: {
                   style={{
                     color: isTribute
                       ? colors.gold
-                      : monster.position === "defense"
-                        ? colors.blue
-                        : colors.red,
+                      : props.shadowverse
+                        ? colors.red
+                        : monster.position === "defense"
+                          ? colors.blue
+                          : colors.red,
                   }}
                 >
-                  {isTribute ? "祭品" : monster.position === "defense" ? "守备" : "攻击"}
+                  {isTribute
+                    ? "祭品"
+                    : props.shadowverse
+                      ? "随从"
+                      : monster.position === "defense"
+                        ? "守备"
+                        : "攻击"}
                 </span>
                 <span style={{ color: colors.faint }}>
-                  {monster.position === "defense"
-                    ? effectiveDefense(monster)
-                    : effectiveAttack(monster)}
+                  {props.shadowverse
+                    ? `生命 ${monsterHealth(monster)}`
+                    : monster.position === "defense"
+                      ? effectiveDefense(monster)
+                      : effectiveAttack(monster)}
                 </span>
               </div>
             </div>
@@ -737,6 +800,7 @@ function CenterBar(props: {
   directAttackEnabled: boolean;
   hasSelectedMonster: boolean;
   attackMode: boolean;
+  evolvePoints?: number;
 }): React.ReactElement {
   const { state } = props;
   return (
@@ -768,6 +832,9 @@ function CenterBar(props: {
       <span style={{ fontSize: 11, color: colors.faint }}>
         召唤 {state.summonsThisTurn}/{state.rules.summonPerTurn} · 攻击{" "}
         {state.attackLocked ? "锁定（先攻）" : "可用"}
+        {props.evolvePoints !== undefined
+          ? ` · 进化点 ${props.evolvePoints}`
+          : ""}
       </span>
       <div style={{ flex: 1 }} />
       {props.attackMode ? (

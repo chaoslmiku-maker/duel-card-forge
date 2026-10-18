@@ -13,9 +13,11 @@
  *   - panelOpen：面板是否可见（用于判断剧情等待战斗时玩家是否中途关掉了面板）。
  */
 import type { DuelState } from "../engine/duel-engine";
+import type { RtState } from "../engine/realtime-engine";
 import type { DeckEntry } from "../types";
 
 let currentState: DuelState | null = null;
+let realtimeState: RtState | null = null;
 let panelOpen = false;
 const listeners = new Set<() => void>();
 
@@ -35,6 +37,7 @@ export function getDuelState(): DuelState | null {
 
 export function setDuelState(next: DuelState | null): void {
   currentState = next;
+  if (next) realtimeState = null;
   notify();
 }
 
@@ -43,6 +46,17 @@ export function subscribeDuelState(listener: () => void): () => void {
   return () => {
     listeners.delete(listener);
   };
+}
+
+/** 即时对战状态（与回合制互斥：开始其中一种时会清空另一种）。 */
+export function getRealtimeState(): RtState | null {
+  return realtimeState;
+}
+
+export function setRealtimeState(next: RtState | null): void {
+  realtimeState = next;
+  if (next) currentState = null;
+  notify();
 }
 
 /** 面板挂载/卸载时更新；剧情 Block 用它判断玩家有没有中途关掉面板。 */

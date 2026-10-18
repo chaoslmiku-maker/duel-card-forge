@@ -33,6 +33,10 @@ export interface FieldMonster {
   tempDef: number;
   attacksUsed: number;
   changedPosition: boolean;
+  /** 影之诗模式：累计受到的伤害（生命 = 守备力 - 伤害）。 */
+  damage: number;
+  /** 影之诗模式：是否已进化。 */
+  evolved: boolean;
 }
 
 export interface SetTrapEntry {
@@ -68,6 +72,8 @@ export interface DuelState {
   summonsThisTurn: number;
   /** 先攻第一回合不允许攻击。 */
   attackLocked: boolean;
+  /** 影之诗模式：双方剩余进化点。 */
+  evolve: Record<SideId, number>;
   log: DuelLog[];
   winner?: SideId | "draw";
 }
@@ -111,6 +117,7 @@ function cloneSide(side: DuelSide): DuelSide {
 function cloneState(state: DuelState): DuelState {
   return {
     ...state,
+    evolve: { ...state.evolve },
     player: cloneSide(state.player),
     opponent: cloneSide(state.opponent),
     log: [...state.log],
@@ -237,6 +244,10 @@ export function startDuel(
     opponent: makeSide(library, enemyDeck, rules),
     summonsThisTurn: 0,
     attackLocked: !rules.firstTurnAttack,
+    evolve: {
+      player: rules.evolvePoints,
+      opponent: rules.evolvePoints,
+    },
     log: [],
   };
   log(state, "info", "决斗开始！");
@@ -549,6 +560,8 @@ export function summonMonster(
     tempDef: 0,
     attacksUsed: 0,
     changedPosition: false,
+    damage: 0,
+    evolved: false,
   };
   next = { ...next, monsters, graveyard };
   current = withSide(current, "player", next);
@@ -690,6 +703,121 @@ function battleDamage(state: DuelState, side: SideId, amount: number): DuelState
   return applyDamage(state, side, scaled, "战斗伤害");
 }
 
+/** 影之诗模式：怪兽当前生命 = 守备力 + 修正 - 累计伤害。 */
+export function monsterHealth(monster: FieldMonster): number {
+  return Math.max(0, monster.card.defense + monster.defMod - monster.damage);
+}
+
+function damageMonster(
+  state: DuelState,
+  side: SideId,
+  slot: number,
+  amount: number,
+): DuelState {
+  const s = sideOf(state, side);
+  const monster = s.monsters[slot];
+  if (!monster || amount <= 0) return state;
+  const monsters = [...s.monsters];
+  monsters[slot] = { ...monster, damage: monster.damage + amount };
+  const current = withSide(state, side, { ...s, monsters });
+  const updated = monsters[slot];
+  if (updated && monsterHealth(updated) <= 0) {
+    return destroyMonster(current, side, slot, "battle");
+  }
+  return current;
+}
+
+/**
+ * 影之诗模式战斗：攻守双方同时受到对方攻击力的伤害，生命跨回合保留；
+ * 可以直接攻击对方玩家（无视对方是否有随从）。
+ */
+function resolveShadowverseBattle(
+  state: DuelState,
+  attackerSlot: number,
+  targetUid: string | null,
+): DuelResult {
+  let current = state;
+  const attacker = sideOf(current, "player").monsters[attackerSlot];
+  if (!attacker) return { state: current, ok: false, message: "没有这只怪兽。" };
+  const atk = effectiveAttack(attacker);
+
+  if (targetUid === null) {
+    current = applyDamage(current, "opponent", atk, "攻击");
+    log(
+      current,
+      "good",
+      `${attacker.card.name} 直接攻击，造成 ${atk} 点伤害。`,
+    );
+    return { state: checkVictory(current), ok: true };
+  }
+
+  const enemySide = sideOf(current, "opponent");
+  const targetSlot = enemySide.monsters.findIndex(
+    (m) => m !== null && m.uid === targetUid,
+  );
+  if (targetSlot < 0) {
+    return { state: current, ok: false, message: "攻击目标无效。" };
+  }
+  const target = enemySide.monsters[targetSlot];
+  if (!target) return { state: current, ok: false, message: "攻击目标无效。" };
+
+  const retaliation = effectiveAttack(target);
+  log(
+    current,
+    "info",
+    `${attacker.card.name}（${atk}）与 ${target.card.name}（${retaliation}）交战。`,
+  );
+
+  // 同时结算：先记录双方伤害，避免一方被破坏后另一方少算反击
+  const targetHealthBefore = monsterHealth(target);
+  const attackerHealthBefore = monsterHealth(attacker);
+  current = damageMonster(current, "opponent", targetSlot, atk);
+  current = damageMonster(current, "player", attackerSlot, retaliation);
+  log(
+    current,
+    "info",
+    `目标剩余 ${Math.max(0, targetHealthBefore - atk)}，` +
+      `${attacker.card.name} 剩余 ${Math.max(0, attackerHealthBefore - retaliation)}。`,
+  );
+  return { state: checkVictory(current), ok: true };
+}
+
+/** 影之诗模式：消耗 1 点进化点，使自己的随从 +N/+M 并且本回合可再攻击。 */
+export function evolveMonster(state: DuelState, monsterUid: string): DuelResult {
+  if (state.winner) return { state, ok: false, message: "决斗已结束。" };
+  if (state.rules.battleMode !== "shadowverse") {
+    return { state, ok: false, message: "当前模式不支持进化。" };
+  }
+  if (state.active !== "player") return { state, ok: false, message: "现在不是你的回合。" };
+  const side = state.player;
+  const slot = slotOfMonster(side, monsterUid);
+  if (slot < 0) return { state, ok: false, message: "没有这只怪兽。" };
+  const monster = side.monsters[slot];
+  if (!monster) return { state, ok: false, message: "没有这只怪兽。" };
+  if (monster.evolved) return { state, ok: false, message: "这只随从已经进化过了。" };
+  if (state.evolve.player <= 0) {
+    return { state, ok: false, message: "进化点已用完。" };
+  }
+
+  const monsters = [...side.monsters];
+  monsters[slot] = {
+    ...monster,
+    evolved: true,
+    atkMod: monster.atkMod + state.rules.evolveAttack,
+    defMod: monster.defMod + state.rules.evolveDefense,
+    attacksUsed: 0,
+    changedPosition: false,
+  };
+  const current = withSide(state, "player", { ...side, monsters });
+  current.evolve = { ...current.evolve, player: current.evolve.player - 1 };
+  log(
+    current,
+    "good",
+    `${monster.card.name} 进化：攻击力 +${state.rules.evolveAttack}、生命 +${state.rules.evolveDefense}（剩余进化点 ${current.evolve.player}）。`,
+  );
+  return { state: current, ok: true };
+}
+
 export function declareAttack(
   state: DuelState,
   attackerUid: string,
@@ -712,13 +840,14 @@ export function declareAttack(
   }
   const enemy = state.opponent;
   const enemyHasMonsters = enemy.monsters.some((m) => m !== null);
+  const shadowverse = state.rules.battleMode === "shadowverse";
   const canDirect =
+    shadowverse ||
     !enemyHasMonsters ||
-    attacker.card.keywords.includes("direct") ||
-    (state.rules.directAttackAllowed && !enemyHasMonsters);
+    attacker.card.keywords.includes("direct");
   if (targetUid === null) {
     if (!canDirect) return { state, ok: false, message: "对方场上有怪兽，无法直接攻击。" };
-    if (!state.rules.directAttackAllowed) {
+    if (!shadowverse && !state.rules.directAttackAllowed) {
       return { state, ok: false, message: "当前规则禁止直接攻击。" };
     }
   }
@@ -744,6 +873,10 @@ export function declareAttack(
   });
   current = checkVictory(current);
   if (current.winner) return { state: current, ok: true };
+
+  if (current.rules.battleMode === "shadowverse") {
+    return resolveShadowverseBattle(current, attackerSlot, targetUid);
+  }
 
   const atk = effectiveAttack(attackerNow);
 
@@ -993,6 +1126,8 @@ function aiSummon(
     tempDef: 0,
     attacksUsed: 0,
     changedPosition: false,
+    damage: 0,
+    evolved: false,
   };
   current = withSide(current, "opponent", {
     ...side,
@@ -1188,6 +1323,8 @@ export function summonDirect(
     tempDef: 0,
     attacksUsed: 0,
     changedPosition: false,
+    damage: 0,
+    evolved: false,
   };
   current = withSide(current, side, { ...sideOf(current, side), monsters });
   log(

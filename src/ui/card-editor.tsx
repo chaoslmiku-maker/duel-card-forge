@@ -375,6 +375,38 @@ export function CardEditor(props: {
                   <NumInput value={selected.cost} min={0} max={30} onChange={(cost) => patch({ cost })} />
                 </Field>
               </div>
+              <div style={{ marginTop: 10, fontSize: 11, color: colors.faint }}>
+                即时对战（皇室战争风）专用；回合制与影之诗模式会忽略这三项。
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: 10, marginTop: 6 }}>
+                <Field label="移动速度" hint="格 / 秒">
+                  <NumInput
+                    value={selected.moveSpeed ?? 1.2}
+                    min={0}
+                    max={5}
+                    step={1}
+                    onChange={(moveSpeed) => patch({ moveSpeed })}
+                  />
+                </Field>
+                <Field label="攻击间隔" hint="毫秒">
+                  <NumInput
+                    value={selected.attackIntervalMs ?? 1000}
+                    min={200}
+                    max={5000}
+                    step={100}
+                    onChange={(attackIntervalMs) => patch({ attackIntervalMs })}
+                  />
+                </Field>
+                <Field label="攻击距离" hint="格">
+                  <NumInput
+                    value={selected.range ?? 0.8}
+                    min={0}
+                    max={6}
+                    step={1}
+                    onChange={(range) => patch({ range })}
+                  />
+                </Field>
+              </div>
             </Section>
 
             <Section title="立绘 / 卡图">

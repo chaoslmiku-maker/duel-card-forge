@@ -418,7 +418,63 @@ const DEFAULT_RULES = {
   turnLimit: 30,
   firstTurnAttack: false,
   aiEnabled: true,
-  deckMinSize: 15
+  deckMinSize: 15,
+  battleMode: "duel",
+  evolvePoints: 3,
+  evolveAttack: 2,
+  evolveDefense: 2,
+  elixirMax: 10,
+  elixirRegenMs: 2800,
+  matchSeconds: 180,
+  towerHp: 1500,
+  kingTowerHp: 3e3
+};
+const BATTLE_MODE_PRESETS = {
+  duel: {
+    battleMode: "duel",
+    startingLp: 8e3,
+    startingHand: 5,
+    drawPerTurn: 1,
+    monsterZones: 3,
+    spellZones: 2,
+    energyStart: 3,
+    energyPerTurn: 1,
+    energyMax: 10,
+    tributeEnabled: true,
+    summonPerTurn: 1,
+    firstTurnAttack: false
+  },
+  shadowverse: {
+    battleMode: "shadowverse",
+    startingLp: 20,
+    startingHand: 4,
+    drawPerTurn: 1,
+    monsterZones: 5,
+    spellZones: 0,
+    energyStart: 1,
+    energyPerTurn: 1,
+    energyMax: 10,
+    tributeEnabled: false,
+    summonPerTurn: 9,
+    firstTurnAttack: false,
+    evolvePoints: 3
+  },
+  realtime: {
+    battleMode: "realtime",
+    startingHand: 0,
+    drawPerTurn: 0,
+    handLimit: 0,
+    elixirMax: 10,
+    elixirRegenMs: 2800,
+    matchSeconds: 180,
+    towerHp: 1500,
+    kingTowerHp: 3e3
+  }
+};
+const BATTLE_MODE_LABELS = {
+  duel: "回合制（游戏王风）",
+  shadowverse: "影之诗风",
+  realtime: "即时对战（皇室战争风）"
 };
 const ATTRIBUTE_LABELS = {
   light: "光",
@@ -606,7 +662,16 @@ function normalizeCard(raw) {
     art: typeof row.art === "string" ? row.art : "",
     description: typeof row.description === "string" ? row.description : "",
     effects,
-    keywords
+    keywords,
+    moveSpeed: Math.max(
+      0.2,
+      Math.min(5, Number(row.moveSpeed) > 0 ? Number(row.moveSpeed) : 1.2)
+    ),
+    attackIntervalMs: num(row.attackIntervalMs, 1e3, 200, 5e3),
+    range: Math.max(
+      0.2,
+      Math.min(6, Number(row.range) > 0 ? Number(row.range) : 0.8)
+    )
   };
 }
 function normalizeCards(raw) {
@@ -631,6 +696,7 @@ function normalizeRules(raw) {
     return Math.max(min, Math.min(max, Math.round(parsed)));
   };
   const bool = (key) => typeof row[key] === "boolean" ? row[key] : DEFAULT_RULES[key];
+  const mode = row.battleMode === "shadowverse" || row.battleMode === "realtime" ? row.battleMode : "duel";
   return {
     startingLp: num("startingLp", 100, 999999),
     startingHand: num("startingHand", 0, 8),
@@ -641,7 +707,7 @@ function normalizeRules(raw) {
     energyStart: num("energyStart", 0, 99),
     energyPerTurn: num("energyPerTurn", 0, 99),
     energyMax: num("energyMax", 1, 99),
-    summonPerTurn: num("summonPerTurn", 1, 5),
+    summonPerTurn: num("summonPerTurn", 1, 9),
     tributeEnabled: bool("tributeEnabled"),
     tributeLevelOne: num("tributeLevelOne", 1, 12),
     tributeLevelTwo: num("tributeLevelTwo", 1, 12),
@@ -652,10 +718,20 @@ function normalizeRules(raw) {
     turnLimit: num("turnLimit", 0, 999),
     firstTurnAttack: bool("firstTurnAttack"),
     aiEnabled: bool("aiEnabled"),
-    deckMinSize: num("deckMinSize", 1, 60)
+    deckMinSize: num("deckMinSize", 1, 60),
+    battleMode: mode,
+    evolvePoints: num("evolvePoints", 0, 9),
+    evolveAttack: num("evolveAttack", 0, 20),
+    evolveDefense: num("evolveDefense", 0, 20),
+    elixirMax: num("elixirMax", 1, 20),
+    elixirRegenMs: num("elixirRegenMs", 300, 2e4),
+    matchSeconds: num("matchSeconds", 30, 900),
+    towerHp: num("towerHp", 100, 99999),
+    kingTowerHp: num("kingTowerHp", 100, 99999)
   };
 }
 let currentState = null;
+let realtimeState = null;
 let panelOpen = false;
 const listeners = /* @__PURE__ */ new Set();
 function notify() {
@@ -672,6 +748,7 @@ function getDuelState() {
 }
 function setDuelState(next) {
   currentState = next;
+  if (next) realtimeState = null;
   notify();
 }
 function subscribeDuelState(listener) {
@@ -679,6 +756,14 @@ function subscribeDuelState(listener) {
   return () => {
     listeners.delete(listener);
   };
+}
+function getRealtimeState() {
+  return realtimeState;
+}
+function setRealtimeState(next) {
+  realtimeState = next;
+  if (next) currentState = null;
+  notify();
 }
 function setPanelOpen(open) {
   if (panelOpen === open) return;
@@ -696,7 +781,7 @@ function getCachedDeck() {
   return cachedDeck;
 }
 let uidSeq = 0;
-function nextUid() {
+function nextUid$1() {
   uidSeq += 1;
   return `ci_${uidSeq}`;
 }
@@ -723,6 +808,7 @@ function cloneSide(side) {
 function cloneState(state) {
   return {
     ...state,
+    evolve: { ...state.evolve },
     player: cloneSide(state.player),
     opponent: cloneSide(state.opponent),
     log: [...state.log]
@@ -737,7 +823,7 @@ function effectiveAttack(monster) {
 function effectiveDefense(monster) {
   return Math.max(0, monster.card.defense + monster.defMod + monster.tempDef);
 }
-function shuffle(items) {
+function shuffle$1(items) {
   const copy = [...items];
   for (let i = copy.length - 1; i > 0; i -= 1) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -752,13 +838,13 @@ function makeSide(library, deck, rules) {
     if (!card) continue;
     const count = Math.max(0, Math.min(20, Math.round(entry.count)));
     for (let i = 0; i < count; i += 1) {
-      cards.push({ uid: nextUid(), card });
+      cards.push({ uid: nextUid$1(), card });
     }
   }
   return {
     lp: rules.startingLp,
     energy: rules.energyStart,
-    deck: shuffle(cards),
+    deck: shuffle$1(cards),
     hand: [],
     graveyard: [],
     monsters: new Array(rules.monsterZones).fill(null),
@@ -773,7 +859,7 @@ function drawCards(state, side, count) {
     if (s.deck.length === 0) {
       if (current.rules.deckOutLose) {
         current = { ...current, winner: otherSide(side) };
-        log(current, "bad", `${sideName(side)} 卡组已抽空，判负。`);
+        log(current, "bad", `${sideName$1(side)} 卡组已抽空，判负。`);
       }
       break;
     }
@@ -784,7 +870,7 @@ function drawCards(state, side, count) {
   }
   return { state: current, drawn };
 }
-function sideName(side) {
+function sideName$1(side) {
   return side === "player" ? "你" : "对手";
 }
 function beginTurn(state, side, first) {
@@ -802,7 +888,7 @@ function beginTurn(state, side, first) {
     const result = drawCards(current, side, current.rules.drawPerTurn);
     current = result.state;
     if (result.drawn > 0) {
-      log(current, "info", `${sideName(side)} 抽了 ${result.drawn} 张卡。`);
+      log(current, "info", `${sideName$1(side)} 抽了 ${result.drawn} 张卡。`);
     }
   }
   if (current.rules.turnLimit > 0 && current.turn > current.rules.turnLimit) {
@@ -823,6 +909,10 @@ function startDuel(libraryCards, deck, rules, opponentDeck, firstSide = "player"
     opponent: makeSide(library, enemyDeck, rules),
     summonsThisTurn: 0,
     attackLocked: !rules.firstTurnAttack,
+    evolve: {
+      player: rules.evolvePoints,
+      opponent: rules.evolvePoints
+    },
     log: []
   };
   log(state, "info", "决斗开始！");
@@ -893,7 +983,7 @@ function applyDamage(state, side, amount, label) {
   const s = sideOf(state, side);
   const next = { ...s, lp: Math.max(0, s.lp - amount) };
   const current = withSide(state, side, next);
-  log(current, side === "player" ? "bad" : "good", `${sideName(side)} 受到 ${amount} 点${label}（剩余 ${next.lp}）。`);
+  log(current, side === "player" ? "bad" : "good", `${sideName$1(side)} 受到 ${amount} 点${label}（剩余 ${next.lp}）。`);
   return current;
 }
 function applyHeal(state, side, amount) {
@@ -901,7 +991,7 @@ function applyHeal(state, side, amount) {
   const s = sideOf(state, side);
   const next = { ...s, lp: s.lp + amount };
   const current = withSide(state, side, next);
-  log(current, side === "player" ? "good" : "bad", `${sideName(side)} 回复 ${amount} 点生命值（当前 ${next.lp}）。`);
+  log(current, side === "player" ? "good" : "bad", `${sideName$1(side)} 回复 ${amount} 点生命值（当前 ${next.lp}）。`);
   return current;
 }
 function applyBuff(state, side, effect, selfMonsterUid) {
@@ -928,7 +1018,7 @@ function applyBuff(state, side, effect, selfMonsterUid) {
   log(
     current,
     "info",
-    `${sideName(side)} 的 ${effect.stat === "attack" ? "攻击力" : "守备力"} +${amount}（${effect.target === "self-monsters" ? "全体" : "单体"}）。`
+    `${sideName$1(side)} 的 ${effect.stat === "attack" ? "攻击力" : "守备力"} +${amount}（${effect.target === "self-monsters" ? "全体" : "单体"}）。`
   );
   return current;
 }
@@ -953,7 +1043,7 @@ function resolveEffects(state, side, card, trigger, opts = {}) {
       const result = drawCards(current, side, effect.value);
       current = result.state;
       if (result.drawn > 0) {
-        log(current, "info", `${sideName(side)} 因「${card.name}」抽了 ${result.drawn} 张卡。`);
+        log(current, "info", `${sideName$1(side)} 因「${card.name}」抽了 ${result.drawn} 张卡。`);
       }
       continue;
     }
@@ -1076,7 +1166,9 @@ function summonMonster(state, handUid, position, tributeUids = []) {
     tempAtk: 0,
     tempDef: 0,
     attacksUsed: 0,
-    changedPosition: false
+    changedPosition: false,
+    damage: 0,
+    evolved: false
   };
   next = { ...next, monsters, graveyard };
   current = withSide(current, "player", next);
@@ -1188,7 +1280,7 @@ function triggerDefenderTrap(state, defender) {
     traps,
     graveyard: [...side.graveyard, { uid: trap.uid, card: trap.card }]
   });
-  log(current, "warn", `${sideName(defender)} 发动了陷阱卡「${trap.card.name}」。`);
+  log(current, "warn", `${sideName$1(defender)} 发动了陷阱卡「${trap.card.name}」。`);
   const negate = trap.card.effects.some(
     (effect) => effect.trigger === "on-activate" && effect.kind === "negate"
   );
@@ -1202,6 +1294,95 @@ function triggerDefenderTrap(state, defender) {
 function battleDamage(state, side, amount) {
   const scaled = Math.round(amount * state.rules.battleDamageScale / 100);
   return applyDamage(state, side, scaled, "战斗伤害");
+}
+function monsterHealth(monster) {
+  return Math.max(0, monster.card.defense + monster.defMod - monster.damage);
+}
+function damageMonster(state, side, slot, amount) {
+  const s = sideOf(state, side);
+  const monster = s.monsters[slot];
+  if (!monster || amount <= 0) return state;
+  const monsters = [...s.monsters];
+  monsters[slot] = { ...monster, damage: monster.damage + amount };
+  const current = withSide(state, side, { ...s, monsters });
+  const updated = monsters[slot];
+  if (updated && monsterHealth(updated) <= 0) {
+    return destroyMonster(current, side, slot, "battle");
+  }
+  return current;
+}
+function resolveShadowverseBattle(state, attackerSlot, targetUid) {
+  let current = state;
+  const attacker = sideOf(current, "player").monsters[attackerSlot];
+  if (!attacker) return { state: current, ok: false, message: "没有这只怪兽。" };
+  const atk = effectiveAttack(attacker);
+  if (targetUid === null) {
+    current = applyDamage(current, "opponent", atk, "攻击");
+    log(
+      current,
+      "good",
+      `${attacker.card.name} 直接攻击，造成 ${atk} 点伤害。`
+    );
+    return { state: checkVictory(current), ok: true };
+  }
+  const enemySide = sideOf(current, "opponent");
+  const targetSlot = enemySide.monsters.findIndex(
+    (m) => m !== null && m.uid === targetUid
+  );
+  if (targetSlot < 0) {
+    return { state: current, ok: false, message: "攻击目标无效。" };
+  }
+  const target = enemySide.monsters[targetSlot];
+  if (!target) return { state: current, ok: false, message: "攻击目标无效。" };
+  const retaliation = effectiveAttack(target);
+  log(
+    current,
+    "info",
+    `${attacker.card.name}（${atk}）与 ${target.card.name}（${retaliation}）交战。`
+  );
+  const targetHealthBefore = monsterHealth(target);
+  const attackerHealthBefore = monsterHealth(attacker);
+  current = damageMonster(current, "opponent", targetSlot, atk);
+  current = damageMonster(current, "player", attackerSlot, retaliation);
+  log(
+    current,
+    "info",
+    `目标剩余 ${Math.max(0, targetHealthBefore - atk)}，${attacker.card.name} 剩余 ${Math.max(0, attackerHealthBefore - retaliation)}。`
+  );
+  return { state: checkVictory(current), ok: true };
+}
+function evolveMonster(state, monsterUid) {
+  if (state.winner) return { state, ok: false, message: "决斗已结束。" };
+  if (state.rules.battleMode !== "shadowverse") {
+    return { state, ok: false, message: "当前模式不支持进化。" };
+  }
+  if (state.active !== "player") return { state, ok: false, message: "现在不是你的回合。" };
+  const side = state.player;
+  const slot = slotOfMonster(side, monsterUid);
+  if (slot < 0) return { state, ok: false, message: "没有这只怪兽。" };
+  const monster = side.monsters[slot];
+  if (!monster) return { state, ok: false, message: "没有这只怪兽。" };
+  if (monster.evolved) return { state, ok: false, message: "这只随从已经进化过了。" };
+  if (state.evolve.player <= 0) {
+    return { state, ok: false, message: "进化点已用完。" };
+  }
+  const monsters = [...side.monsters];
+  monsters[slot] = {
+    ...monster,
+    evolved: true,
+    atkMod: monster.atkMod + state.rules.evolveAttack,
+    defMod: monster.defMod + state.rules.evolveDefense,
+    attacksUsed: 0,
+    changedPosition: false
+  };
+  const current = withSide(state, "player", { ...side, monsters });
+  current.evolve = { ...current.evolve, player: current.evolve.player - 1 };
+  log(
+    current,
+    "good",
+    `${monster.card.name} 进化：攻击力 +${state.rules.evolveAttack}、生命 +${state.rules.evolveDefense}（剩余进化点 ${current.evolve.player}）。`
+  );
+  return { state: current, ok: true };
 }
 function declareAttack(state, attackerUid, targetUid) {
   if (state.winner) return { state, ok: false, message: "决斗已结束。" };
@@ -1221,10 +1402,11 @@ function declareAttack(state, attackerUid, targetUid) {
   }
   const enemy = state.opponent;
   const enemyHasMonsters = enemy.monsters.some((m) => m !== null);
-  const canDirect = !enemyHasMonsters || attacker.card.keywords.includes("direct") || state.rules.directAttackAllowed && !enemyHasMonsters;
+  const shadowverse = state.rules.battleMode === "shadowverse";
+  const canDirect = shadowverse || !enemyHasMonsters || attacker.card.keywords.includes("direct");
   if (targetUid === null) {
     if (!canDirect) return { state, ok: false, message: "对方场上有怪兽，无法直接攻击。" };
-    if (!state.rules.directAttackAllowed) {
+    if (!shadowverse && !state.rules.directAttackAllowed) {
       return { state, ok: false, message: "当前规则禁止直接攻击。" };
     }
   }
@@ -1247,6 +1429,9 @@ function declareAttack(state, attackerUid, targetUid) {
   });
   current = checkVictory(current);
   if (current.winner) return { state: current, ok: true };
+  if (current.rules.battleMode === "shadowverse") {
+    return resolveShadowverseBattle(current, attackerSlot, targetUid);
+  }
   const atk = effectiveAttack(attackerNow);
   if (targetUid === null) {
     current = battleDamage(current, "opponent", atk);
@@ -1458,7 +1643,9 @@ function aiSummon(state, handUid, position, tributeUids) {
     tempAtk: 0,
     tempDef: 0,
     attacksUsed: 0,
-    changedPosition: false
+    changedPosition: false,
+    damage: 0,
+    evolved: false
   };
   current = withSide(current, "opponent", {
     ...side,
@@ -1563,7 +1750,7 @@ function aiDeclareAttack(state, attackerUid, targetUid) {
   return { state: checkVictory(current), ok: true };
 }
 function createCardInstance(card) {
-  return { uid: nextUid(), card };
+  return { uid: nextUid$1(), card };
 }
 function addCardToZone(state, side, card, zone, count = 1) {
   const amount = Math.max(1, Math.min(9, Math.round(count)));
@@ -1577,7 +1764,7 @@ function addCardToZone(state, side, card, zone, count = 1) {
   log(
     current,
     "info",
-    `${sideName(side)} 获得 ${amount} 张「${card.name}」（${zone === "hand" ? "手牌" : zone === "graveyard" ? "墓地" : zone === "deck-top" ? "卡组顶" : "卡组底"}）。`
+    `${sideName$1(side)} 获得 ${amount} 张「${card.name}」（${zone === "hand" ? "手牌" : zone === "graveyard" ? "墓地" : zone === "deck-top" ? "卡组顶" : "卡组底"}）。`
   );
   return current;
 }
@@ -1599,13 +1786,15 @@ function summonDirect(state, side, card, position, slot) {
     tempAtk: 0,
     tempDef: 0,
     attacksUsed: 0,
-    changedPosition: false
+    changedPosition: false,
+    damage: 0,
+    evolved: false
   };
   current = withSide(current, side, { ...sideOf(current, side), monsters });
   log(
     current,
     side === "player" ? "good" : "bad",
-    `${sideName(side)} 的「${card.name}」被直接召唤到场上（${position === "attack" ? "攻击" : "守备"}表示）。`
+    `${sideName$1(side)} 的「${card.name}」被直接召唤到场上（${position === "attack" ? "攻击" : "守备"}表示）。`
   );
   current = resolveEffects(current, side, card, "on-summon", { selfMonsterUid: instance.uid });
   return { state: checkVictory(current), ok: true };
@@ -1629,6 +1818,323 @@ function replaceCardInstances(state, cardId, next) {
     player: mapSide(current.player),
     opponent: mapSide(current.opponent)
   };
+}
+const RT_LANE_COUNT = 2;
+let rtSeq = 0;
+function nextUid(prefix) {
+  rtSeq += 1;
+  return `${prefix}_${rtSeq}`;
+}
+function laneOf(index) {
+  return index === 1 ? 1 : 0;
+}
+function sideName(side) {
+  return side === "player" ? "你" : "对手";
+}
+function other(side) {
+  return side === "player" ? "opponent" : "player";
+}
+function pushLog(state, tone, text) {
+  state.log.push({ id: nextUid("log"), tone, text });
+  if (state.log.length > 200) state.log.splice(0, state.log.length - 200);
+}
+function shuffle(items) {
+  const copy = [...items];
+  for (let i = copy.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+function expandDeck(deck, cards) {
+  const byId = new Map(cards.map((card) => [card.id, card]));
+  const out = [];
+  for (const entry of deck) {
+    const card = byId.get(entry.cardId);
+    if (!card) continue;
+    const count = Math.max(1, Math.min(9, Math.round(entry.count)));
+    for (let i = 0; i < count; i += 1) out.push(card);
+  }
+  return shuffle(out);
+}
+function makeTowers(rules, side) {
+  const base = side === "player" ? 3 : 7;
+  const kingX = side === "player" ? 1 : 9;
+  const towers = [0, 1].map((lane) => ({
+    key: `${side}_lane_${lane}`,
+    side,
+    lane,
+    x: lane === 0 ? base - 0.4 : base + 0.4,
+    hp: rules.towerHp,
+    maxHp: rules.towerHp,
+    cooldown: 0,
+    alive: true
+  }));
+  towers.push({
+    key: `${side}_king`,
+    side,
+    lane: "king",
+    x: kingX,
+    hp: rules.kingTowerHp,
+    maxHp: rules.kingTowerHp,
+    cooldown: 0,
+    alive: true
+  });
+  return towers;
+}
+function clone(state) {
+  return {
+    ...state,
+    elixir: { ...state.elixir },
+    hand: {
+      player: [...state.hand.player],
+      opponent: [...state.hand.opponent]
+    },
+    deck: {
+      player: [...state.deck.player],
+      opponent: [...state.deck.opponent]
+    },
+    towers: state.towers.map((tower) => ({ ...tower })),
+    units: state.units.map((unit) => ({ ...unit })),
+    crowns: { ...state.crowns },
+    log: [...state.log]
+  };
+}
+function drawHand(state, side) {
+  while (state.hand[side].length < 4) {
+    if (state.deck[side].length === 0) {
+      state.deck[side] = shuffle([...state.hand[side]]);
+    }
+    const next = state.deck[side].shift();
+    if (!next) break;
+    state.hand[side].push(next);
+  }
+}
+function startRealtime(cards, deck, rules, opponentDeck) {
+  const playerDeck = expandDeck(deck, cards);
+  const enemyDeck = expandDeck(
+    opponentDeck && opponentDeck.length > 0 ? opponentDeck : deck,
+    cards
+  );
+  const state = {
+    rules,
+    timeMs: 0,
+    timeLimitMs: Math.max(30, rules.matchSeconds) * 1e3,
+    elixir: { player: Math.min(rules.elixirMax, 5), opponent: Math.min(rules.elixirMax, 5) },
+    hand: { player: [], opponent: [] },
+    deck: { player: playerDeck, opponent: enemyDeck },
+    towers: [...makeTowers(rules, "player"), ...makeTowers(rules, "opponent")],
+    units: [],
+    crowns: { player: 0, opponent: 0 },
+    log: [],
+    aiCooldown: 3e3
+  };
+  drawHand(state, "player");
+  drawHand(state, "opponent");
+  pushLog(state, "info", "即时对战开始：圣水会随时间回复，摧毁对方国王塔即可获胜。");
+  return state;
+}
+function towerAt(state, side, lane) {
+  return state.towers.find(
+    (tower) => tower.side === side && tower.lane === lane && tower.alive
+  );
+}
+function targetableTowers(state, side, lane) {
+  const enemy = other(side);
+  const laneTower = towerAt(state, enemy, lane);
+  if (laneTower) return [laneTower];
+  const king = towerAt(state, enemy, "king");
+  return king ? [king] : [];
+}
+function damageTower(state, tower, amount, attackerSide) {
+  const live = state.towers.find((item) => item.key === tower.key);
+  if (!live || !live.alive) return;
+  live.hp = Math.max(0, live.hp - amount);
+  if (live.hp > 0) return;
+  live.alive = false;
+  if (live.lane === "king") {
+    state.winner = attackerSide;
+    pushLog(
+      state,
+      attackerSide === "player" ? "good" : "bad",
+      `${sideName(attackerSide)}摧毁了国王塔，战斗结束。`
+    );
+    return;
+  }
+  state.crowns[attackerSide] += 1;
+  const label = live.lane === 0 ? "左路" : "右路";
+  pushLog(
+    state,
+    attackerSide === "player" ? "good" : "bad",
+    `${sideName(attackerSide)}推掉了${sideName(live.side)}${label}防御塔。`
+  );
+}
+function nearestEnemyUnit(state, unit) {
+  const range = unit.card.range ?? 0.8;
+  let best;
+  let bestGap = Number.POSITIVE_INFINITY;
+  for (const candidate of state.units) {
+    if (candidate.side === unit.side || candidate.hp <= 0) continue;
+    if (candidate.lane !== unit.lane) continue;
+    const gap = Math.abs(candidate.x - unit.x);
+    if (gap <= range && gap < bestGap) {
+      best = candidate;
+      bestGap = gap;
+    }
+  }
+  return best;
+}
+function nearestTowerInRange(state, unit) {
+  const range = unit.card.range ?? 0.8;
+  let best;
+  let bestGap = Number.POSITIVE_INFINITY;
+  for (const tower of targetableTowers(state, unit.side, unit.lane)) {
+    const gap = Math.abs(tower.x - unit.x);
+    if (gap <= range && gap < bestGap) {
+      best = tower;
+      bestGap = gap;
+    }
+  }
+  return best;
+}
+function removeDead(state) {
+  const survivors = [];
+  for (const unit of state.units) {
+    if (unit.hp > 0) {
+      survivors.push(unit);
+      continue;
+    }
+    pushLog(
+      state,
+      unit.side === "player" ? "bad" : "good",
+      `${unit.card.name}被击倒。`
+    );
+  }
+  state.units = survivors;
+}
+function tick(state, deltaMs) {
+  if (state.winner) return state;
+  const dt = Math.max(0, Math.min(500, deltaMs));
+  if (dt === 0) return state;
+  const next = clone(state);
+  next.timeMs += dt;
+  for (const side of ["player", "opponent"]) {
+    const gain = dt / Math.max(300, next.rules.elixirRegenMs);
+    next.elixir[side] = Math.min(next.rules.elixirMax, next.elixir[side] + gain);
+  }
+  for (const unit of next.units) {
+    if (unit.hp <= 0) continue;
+    unit.cooldown = Math.max(0, unit.cooldown - dt);
+    const target = nearestEnemyUnit(next, unit);
+    if (target) {
+      if (unit.cooldown <= 0) {
+        target.hp = Math.max(0, target.hp - unit.card.attack);
+        unit.cooldown = Math.max(200, unit.card.attackIntervalMs ?? 1e3);
+      }
+      continue;
+    }
+    const tower = nearestTowerInRange(next, unit);
+    if (tower) {
+      if (unit.cooldown <= 0) {
+        damageTower(next, tower, unit.card.attack, unit.side);
+        unit.cooldown = Math.max(200, unit.card.attackIntervalMs ?? 1e3);
+      }
+      continue;
+    }
+    const dir = unit.side === "player" ? 1 : -1;
+    const speed = Math.max(0.2, unit.card.moveSpeed ?? 1.2);
+    unit.x = Math.max(0, Math.min(10, unit.x + dir * speed * dt / 1e3));
+  }
+  for (const tower of next.towers) {
+    if (!tower.alive) continue;
+    tower.cooldown = Math.max(0, tower.cooldown - dt);
+    if (tower.cooldown > 0) continue;
+    const range = tower.lane === "king" ? 7 : 6.5;
+    let target;
+    let bestGap = Number.POSITIVE_INFINITY;
+    for (const unit of next.units) {
+      if (unit.side === tower.side || unit.hp <= 0) continue;
+      if (tower.lane !== "king" && unit.lane !== tower.lane) continue;
+      const gap = Math.abs(unit.x - tower.x);
+      if (gap <= range && gap < bestGap) {
+        target = unit;
+        bestGap = gap;
+      }
+    }
+    if (!target) continue;
+    target.hp = Math.max(0, target.hp - Math.round(next.rules.towerHp * 0.05));
+    tower.cooldown = 1e3;
+  }
+  removeDead(next);
+  if (next.rules.aiEnabled && !next.winner) {
+    next.aiCooldown -= dt;
+    if (next.aiCooldown <= 0) {
+      const playable = next.hand.opponent.map((card, index) => ({ card, index })).filter((item) => item.card.cost <= next.elixir.opponent).sort((a, b) => b.card.cost - a.card.cost);
+      const pick = playable[0];
+      if (pick) {
+        const lane = Math.random() < 0.5 ? 0 : 1;
+        const deployed = deploy(next, "opponent", pick.index, lane);
+        if (deployed.ok) {
+          Object.assign(next, deployed.state);
+        }
+      }
+      next.aiCooldown = 2200 + Math.random() * 1800;
+    }
+  }
+  if (!next.winner && next.timeMs >= next.timeLimitMs) {
+    const playerCrowns = next.crowns.player;
+    const enemyCrowns = next.crowns.opponent;
+    if (playerCrowns > enemyCrowns) next.winner = "player";
+    else if (enemyCrowns > playerCrowns) next.winner = "opponent";
+    else {
+      const playerKing = towerAt(next, "player", "king")?.hp ?? 0;
+      const enemyKing = towerAt(next, "opponent", "king")?.hp ?? 0;
+      if (playerKing > enemyKing) next.winner = "player";
+      else if (enemyKing > playerKing) next.winner = "opponent";
+      else next.winner = "draw";
+    }
+    pushLog(next, "warn", "时间到，按皇冠数与国王塔血量判定胜负。");
+  }
+  return next;
+}
+function deploy(state, side, handIndex, lane) {
+  if (state.winner) return { state, ok: false, message: "战斗已结束。" };
+  const card = state.hand[side][handIndex];
+  if (!card) return { state, ok: false, message: "手牌里没有这张卡。" };
+  if (card.kind !== "monster") {
+    return { state, ok: false, message: "即时模式目前只能部署怪兽卡。" };
+  }
+  if (state.elixir[side] + 1e-6 < card.cost) {
+    return { state, ok: false, message: `圣水不足（需要 ${card.cost}）。` };
+  }
+  const next = clone(state);
+  next.elixir[side] = Math.max(0, next.elixir[side] - card.cost);
+  next.hand[side].splice(handIndex, 1);
+  drawHand(next, side);
+  const laneIndex = laneOf(lane);
+  const spawnX = side === "player" ? 2 : 8;
+  next.units.push({
+    uid: nextUid("unit"),
+    side,
+    lane: laneIndex,
+    card,
+    hp: Math.max(1, card.defense),
+    maxHp: Math.max(1, card.defense),
+    x: spawnX,
+    cooldown: 300
+  });
+  pushLog(
+    next,
+    side === "player" ? "good" : "bad",
+    `${sideName(side)}在${laneIndex === 0 ? "左路" : "右路"}部署了${card.name}。`
+  );
+  return { state: next, ok: true };
+}
+function unitsOnLane(state, lane) {
+  return state.units.filter((unit) => unit.lane === lane).sort((a, b) => a.x - b.x);
+}
+function towerOf(state, side, lane) {
+  return state.towers.find((tower) => tower.side === side && tower.lane === lane);
 }
 const colors = {
   bg: "#0d1220",
@@ -2428,6 +2934,7 @@ function BattleBoard(props) {
   const opponent = state.opponent;
   const enemyHasMonsters = opponent.monsters.some((monster) => monster !== null);
   const myTurn = state.active === "player" && !state.winner;
+  const shadowverse = state.rules.battleMode === "shadowverse";
   const handCard = selectedHand ? player.hand.find((card) => card.uid === selectedHand)?.card ?? null : null;
   const selectedMonsterObj = selectedMonster ? player.monsters.find((monster) => monster?.uid === selectedMonster) ?? null : null;
   const toggleTribute = (uid) => {
@@ -2514,6 +3021,7 @@ function BattleBoard(props) {
               monsters: opponent.monsters,
               traps: opponent.traps,
               highlight: attackMode,
+              shadowverse,
               onMonsterClick: handleEnemyMonsterClick
             }
           ),
@@ -2530,11 +3038,12 @@ function BattleBoard(props) {
                 setAttackMode(false);
                 setSelectedMonster(null);
               },
-              directAttackEnabled: state.rules.directAttackAllowed && (!enemyHasMonsters || Boolean(
+              directAttackEnabled: shadowverse || state.rules.directAttackAllowed && (!enemyHasMonsters || Boolean(
                 selectedMonsterObj?.card.keywords.includes("direct")
               )),
               hasSelectedMonster: Boolean(selectedMonsterObj),
-              attackMode
+              attackMode,
+              evolvePoints: shadowverse ? state.evolve.player : void 0
             }
           ),
           /* @__PURE__ */ jsx(
@@ -2548,6 +3057,7 @@ function BattleBoard(props) {
               traps: player.traps,
               highlight: Boolean(pendingSummon),
               selectedUid: selectedMonster,
+              shadowverse,
               tributeUids: tributes,
               onMonsterClick: (monster) => handleOwnMonsterClick(monster)
             }
@@ -2684,16 +3194,28 @@ function BattleBoard(props) {
                         /* @__PURE__ */ jsxs("span", { style: { color: colors.faint, marginLeft: 6 }, children: [
                           "攻 ",
                           effectiveAttack(selectedMonsterObj),
-                          " / 守",
+                          " /",
                           " ",
-                          effectiveDefense(selectedMonsterObj),
-                          " ·",
-                          " ",
-                          selectedMonsterObj.position === "attack" ? "攻击表示" : "守备表示"
+                          shadowverse ? `生命 ${monsterHealth(selectedMonsterObj)}` : `守 ${effectiveDefense(selectedMonsterObj)}`,
+                          shadowverse ? selectedMonsterObj.evolved ? " · 已进化" : "" : ` · ${selectedMonsterObj.position === "attack" ? "攻击表示" : "守备表示"}`
                         ] })
                       ] }),
                       /* @__PURE__ */ jsx("div", { style: { flex: 1 } }),
-                      selectedMonsterObj.position === "attack" && state.phase === "battle" && myTurn && !state.attackLocked && selectedMonsterObj.attacksUsed < (selectedMonsterObj.card.keywords.includes("double") ? 2 : 1) ? /* @__PURE__ */ jsx(
+                      selectedMonsterObj.position === "attack" && state.phase === "battle" && myTurn && !state.attackLocked && selectedMonsterObj.attacksUsed < (selectedMonsterObj.card.keywords.includes("double") ? 2 : 1) ? shadowverse ? /* @__PURE__ */ jsxs(Fragment, { children: [
+                        /* @__PURE__ */ jsx(
+                          Btn,
+                          {
+                            size: "sm",
+                            variant: "gold",
+                            onClick: () => {
+                              props.onAttack(selectedMonsterObj.uid, null);
+                              setSelectedMonster(null);
+                            },
+                            children: "攻击玩家"
+                          }
+                        ),
+                        enemyHasMonsters ? /* @__PURE__ */ jsx(Btn, { size: "sm", onClick: () => setAttackMode(true), children: "攻击随从" }) : null
+                      ] }) : /* @__PURE__ */ jsx(
                         Btn,
                         {
                           size: "sm",
@@ -2708,7 +3230,23 @@ function BattleBoard(props) {
                           children: enemyHasMonsters ? "选择攻击目标" : "直接攻击"
                         }
                       ) : null,
-                      /* @__PURE__ */ jsx(
+                      shadowverse ? /* @__PURE__ */ jsxs(
+                        Btn,
+                        {
+                          size: "sm",
+                          variant: "primary",
+                          disabled: !myTurn || selectedMonsterObj.evolved || state.evolve.player <= 0,
+                          onClick: () => {
+                            props.onEvolve(selectedMonsterObj.uid);
+                            setSelectedMonster(null);
+                          },
+                          children: [
+                            "进化（剩余 ",
+                            state.evolve.player,
+                            "）"
+                          ]
+                        }
+                      ) : /* @__PURE__ */ jsx(
                         Btn,
                         {
                           size: "sm",
@@ -2722,7 +3260,11 @@ function BattleBoard(props) {
                       /* @__PURE__ */ jsx(Btn, { size: "sm", variant: "quiet", onClick: () => setSelectedMonster(null), children: "取消" })
                     ]
                   }
-                ) : /* @__PURE__ */ jsx("div", { style: { fontSize: 11.5, color: colors.faint }, children: "点击手牌查看可执行的操作；点击自己的怪兽可以攻击或改变表示形式。" })
+                ) : /* @__PURE__ */ jsxs("div", { style: { fontSize: 11.5, color: colors.faint }, children: [
+                  "点击手牌查看可执行的操作；点击自己的怪兽可以攻击",
+                  shadowverse ? "或进化" : "或改变表示形式",
+                  "。"
+                ] })
               ]
             }
           )
@@ -2983,12 +3525,12 @@ function ZoneRow(props) {
                     "span",
                     {
                       style: {
-                        color: isTribute ? colors.gold : monster.position === "defense" ? colors.blue : colors.red
+                        color: isTribute ? colors.gold : props.shadowverse ? colors.red : monster.position === "defense" ? colors.blue : colors.red
                       },
-                      children: isTribute ? "祭品" : monster.position === "defense" ? "守备" : "攻击"
+                      children: isTribute ? "祭品" : props.shadowverse ? "随从" : monster.position === "defense" ? "守备" : "攻击"
                     }
                   ),
-                  /* @__PURE__ */ jsx("span", { style: { color: colors.faint }, children: monster.position === "defense" ? effectiveDefense(monster) : effectiveAttack(monster) })
+                  /* @__PURE__ */ jsx("span", { style: { color: colors.faint }, children: props.shadowverse ? `生命 ${monsterHealth(monster)}` : monster.position === "defense" ? effectiveDefense(monster) : effectiveAttack(monster) })
                 ]
               }
             )
@@ -3090,7 +3632,8 @@ function CenterBar(props) {
           state.rules.summonPerTurn,
           " · 攻击",
           " ",
-          state.attackLocked ? "锁定（先攻）" : "可用"
+          state.attackLocked ? "锁定（先攻）" : "可用",
+          props.evolvePoints !== void 0 ? ` · 进化点 ${props.evolvePoints}` : ""
         ] }),
         /* @__PURE__ */ jsx("div", { style: { flex: 1 } }),
         props.attackMode ? /* @__PURE__ */ jsx("span", { style: { fontSize: 11.5, color: colors.gold }, children: "请点击对方怪兽选择攻击目标" }) : null,
@@ -3184,6 +3727,422 @@ function ResultOverlay(props) {
           ]
         }
       )
+    }
+  );
+}
+function formatTime(ms) {
+  const total = Math.max(0, Math.ceil(ms / 1e3));
+  const mm = String(Math.floor(total / 60)).padStart(2, "0");
+  const ss = String(total % 60).padStart(2, "0");
+  return `${mm}:${ss}`;
+}
+function RealtimeBoard(props) {
+  const { state } = props;
+  const [selected, setSelected] = useState(null);
+  const tickRef = useRef(props.onTick);
+  tickRef.current = props.onTick;
+  const running = Boolean(state && !state.winner);
+  useEffect(() => {
+    if (!running) return;
+    const timer = window.setInterval(() => tickRef.current(100), 100);
+    return () => window.clearInterval(timer);
+  }, [running]);
+  useEffect(() => {
+    setSelected(null);
+  }, [state?.winner]);
+  if (!state) {
+    return /* @__PURE__ */ jsx("div", { style: { display: "flex", justifyContent: "center", paddingTop: 20 }, children: /* @__PURE__ */ jsxs(
+      Panel,
+      {
+        title: "即时对战 · 准备",
+        subtitle: "圣水随时间回复，摧毁对方国王塔获胜",
+        style: { width: 560 },
+        bodyStyle: { display: "flex", flexDirection: "column", gap: 12 },
+        children: [
+          /* @__PURE__ */ jsx("div", { style: { fontSize: 12, color: colors.muted, lineHeight: 1.8 }, children: "规则页的「圣水上限 / 圣水回复 / 对局时长 / 塔血量」会直接影响这一局。 卡牌的攻击力 = 每次伤害，守备力 = 生命，花费 = 圣水消耗； 卡牌的「移动速度 / 攻击间隔 / 攻击距离」在卡牌编辑器的战斗数值里调整。" }),
+          !props.deckValid ? /* @__PURE__ */ jsx("div", { style: { fontSize: 12, color: colors.red }, children: "卡组为空或不满足规则要求，请先到「卡组」页准备一套卡组。" }) : /* @__PURE__ */ jsxs("div", { style: { fontSize: 12, color: colors.faint }, children: [
+            "当前卡组 ",
+            props.deckCount,
+            " 张。对手会镜像你的卡组。"
+          ] }),
+          /* @__PURE__ */ jsx(Btn, { variant: "gold", onClick: props.onStart, disabled: !props.deckValid, children: "开始即时对战" })
+        ]
+      }
+    ) });
+  }
+  const elixir = state.elixir.player;
+  const selectedCard = selected !== null ? state.hand.player[selected] ?? null : null;
+  return /* @__PURE__ */ jsxs("div", { style: { display: "flex", flexDirection: "column", gap: 8, height: "100%", minHeight: 0 }, children: [
+    /* @__PURE__ */ jsxs(
+      "div",
+      {
+        style: {
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          background: colors.panel,
+          border: `1px solid ${colors.borderSoft}`,
+          borderRadius: radius.md,
+          padding: "8px 12px"
+        },
+        children: [
+          /* @__PURE__ */ jsx("span", { style: { fontSize: 13, color: colors.goldSoft, fontWeight: 600 }, children: formatTime(state.timeLimitMs - state.timeMs) }),
+          /* @__PURE__ */ jsxs("span", { style: { fontSize: 11, color: colors.faint }, children: [
+            "皇冠 ",
+            state.crowns.player,
+            " : ",
+            state.crowns.opponent
+          ] }),
+          /* @__PURE__ */ jsx("div", { style: { flex: 1 } }),
+          /* @__PURE__ */ jsx("span", { style: { fontSize: 11, color: colors.faint }, children: "圣水" }),
+          /* @__PURE__ */ jsx("div", { style: { width: 220 }, children: /* @__PURE__ */ jsx(
+            StatBar,
+            {
+              label: "",
+              value: Math.floor(elixir),
+              max: state.rules.elixirMax,
+              color: "linear-gradient(90deg,#b264ff,#e0a0ff)",
+              text: `${Math.floor(elixir)}/${state.rules.elixirMax}`
+            }
+          ) })
+        ]
+      }
+    ),
+    /* @__PURE__ */ jsx(KingStrip, { state, side: "opponent" }),
+    /* @__PURE__ */ jsx("div", { style: { display: "flex", flexDirection: "column", gap: 6, flex: 1, minHeight: 0 }, children: Array.from({ length: RT_LANE_COUNT }).map((_, lane) => /* @__PURE__ */ jsx(
+      LaneTrack,
+      {
+        state,
+        lane,
+        deployable: selectedCard !== null,
+        onDeploy: (laneIndex) => {
+          if (selected === null) return;
+          props.onDeploy(selected, laneIndex);
+          setSelected(null);
+        }
+      },
+      lane
+    )) }),
+    /* @__PURE__ */ jsx(KingStrip, { state, side: "player" }),
+    /* @__PURE__ */ jsxs(
+      Panel,
+      {
+        title: `手牌 · ${state.hand.player.length}`,
+        subtitle: selectedCard ? `已选中「${selectedCard.name}」——点兵线的「部署」按钮，或再点一次取消` : "点一张手牌，然后选左路/右路部署",
+        bodyStyle: { padding: 8, display: "flex", flexDirection: "column", gap: 8 },
+        children: [
+          /* @__PURE__ */ jsx("div", { style: { display: "flex", gap: 6, overflowX: "auto", minHeight: 176 }, children: state.hand.player.map((card, index) => {
+            const affordable = card.cost <= elixir + 1e-6;
+            return /* @__PURE__ */ jsx(
+              CardFrame,
+              {
+                card,
+                size: "sm",
+                selected: selected === index,
+                dimmed: !affordable,
+                onClick: () => setSelected(selected === index ? null : index)
+              },
+              `${card.id}_${index}`
+            );
+          }) }),
+          selectedCard ? /* @__PURE__ */ jsxs("div", { style: { display: "flex", gap: 8 }, children: [
+            Array.from({ length: RT_LANE_COUNT }).map((_, lane) => /* @__PURE__ */ jsxs(
+              Btn,
+              {
+                size: "sm",
+                variant: "gold",
+                onClick: () => {
+                  props.onDeploy(selected, lane);
+                  setSelected(null);
+                },
+                children: [
+                  "部署到",
+                  lane === 0 ? "左路" : "右路",
+                  "（圣水 ",
+                  selectedCard.cost,
+                  "）"
+                ]
+              },
+              lane
+            )),
+            /* @__PURE__ */ jsx(Btn, { size: "sm", variant: "quiet", onClick: () => setSelected(null), children: "取消" })
+          ] }) : null
+        ]
+      }
+    ),
+    state.winner ? /* @__PURE__ */ jsx(
+      "div",
+      {
+        style: {
+          position: "fixed",
+          inset: 0,
+          background: "rgba(6,9,18,0.82)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 50
+        },
+        children: /* @__PURE__ */ jsxs(
+          "div",
+          {
+            style: {
+              width: 360,
+              background: colors.panel,
+              border: `1px solid ${colors.gold}`,
+              borderRadius: radius.lg,
+              padding: 22,
+              textAlign: "center"
+            },
+            children: [
+              /* @__PURE__ */ jsx("div", { style: { fontSize: 22, color: colors.goldSoft, fontWeight: 700, marginBottom: 8 }, children: state.winner === "player" ? "你摧毁了国王塔！" : state.winner === "opponent" ? "你的国王塔被摧毁了…" : "时间到，平局" }),
+              /* @__PURE__ */ jsxs("div", { style: { fontSize: 12, color: colors.muted, marginBottom: 18 }, children: [
+                "皇冠 ",
+                state.crowns.player,
+                " : ",
+                state.crowns.opponent
+              ] }),
+              /* @__PURE__ */ jsxs("div", { style: { display: "flex", gap: 8 }, children: [
+                /* @__PURE__ */ jsx(Btn, { variant: "gold", full: true, onClick: props.onStart, children: "再来一局" }),
+                /* @__PURE__ */ jsx(Btn, { variant: "ghost", full: true, onClick: props.onExit, children: "返回" })
+              ] })
+            ]
+          }
+        )
+      }
+    ) : null
+  ] });
+}
+function KingStrip(props) {
+  const { state, side } = props;
+  const king = towerOf(state, side, "king");
+  const laneTowers = [towerOf(state, side, 0), towerOf(state, side, 1)];
+  return /* @__PURE__ */ jsxs(
+    "div",
+    {
+      style: {
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        background: colors.panel,
+        border: `1px solid ${side === "player" ? colors.blue : colors.red}`,
+        borderRadius: radius.md,
+        padding: "6px 12px"
+      },
+      children: [
+        /* @__PURE__ */ jsx("span", { style: { fontSize: 12, color: colors.text, minWidth: 60 }, children: side === "player" ? "你的王国" : "对手王国" }),
+        /* @__PURE__ */ jsx(KingBar, { tower: king, label: "国王塔" }),
+        /* @__PURE__ */ jsx("div", { style: { display: "flex", gap: 8 }, children: laneTowers.map((tower, index) => /* @__PURE__ */ jsx(KingBar, { tower, label: index === 0 ? "左塔" : "右塔", compact: true }, index)) })
+      ]
+    }
+  );
+}
+function KingBar(props) {
+  const { tower } = props;
+  if (!tower) return /* @__PURE__ */ jsx("span", {});
+  const ratio = tower.maxHp > 0 ? tower.hp / tower.maxHp : 0;
+  return /* @__PURE__ */ jsxs("div", { style: { width: props.compact ? 90 : 180 }, children: [
+    /* @__PURE__ */ jsxs(
+      "div",
+      {
+        style: {
+          display: "flex",
+          justifyContent: "space-between",
+          fontSize: 10,
+          color: tower.alive ? colors.faint : colors.red
+        },
+        children: [
+          /* @__PURE__ */ jsx("span", { children: props.label }),
+          /* @__PURE__ */ jsx("span", { children: tower.alive ? Math.ceil(tower.hp) : "已摧毁" })
+        ]
+      }
+    ),
+    /* @__PURE__ */ jsx(
+      "div",
+      {
+        style: {
+          height: 6,
+          borderRadius: 999,
+          background: "#0b1020",
+          border: `1px solid ${colors.borderSoft}`,
+          overflow: "hidden"
+        },
+        children: /* @__PURE__ */ jsx(
+          "div",
+          {
+            style: {
+              width: `${Math.max(0, Math.min(1, ratio)) * 100}%`,
+              height: "100%",
+              background: tower.alive ? "linear-gradient(90deg,#e7c46a,#f4e3b0)" : "#5c2430"
+            }
+          }
+        )
+      }
+    )
+  ] });
+}
+function LaneTrack(props) {
+  const { state, lane } = props;
+  const units = unitsOnLane(state, lane);
+  const playerTower = towerOf(state, "player", lane);
+  const enemyTower = towerOf(state, "opponent", lane);
+  return /* @__PURE__ */ jsxs(
+    "div",
+    {
+      style: {
+        position: "relative",
+        flex: 1,
+        minHeight: 96,
+        background: lane === 0 ? "linear-gradient(90deg,rgba(63,122,214,0.10),rgba(161,58,58,0.10))" : "linear-gradient(90deg,rgba(63,122,214,0.16),rgba(161,58,58,0.16))",
+        border: `1px dashed ${colors.border}`,
+        borderRadius: radius.md,
+        overflow: "hidden"
+      },
+      children: [
+        /* @__PURE__ */ jsx(
+          "span",
+          {
+            style: {
+              position: "absolute",
+              left: 8,
+              top: 6,
+              fontSize: 10,
+              color: colors.faint,
+              letterSpacing: 2
+            },
+            children: lane === 0 ? "左路" : "右路"
+          }
+        ),
+        /* @__PURE__ */ jsx(TowerChip, { tower: playerTower }),
+        /* @__PURE__ */ jsx(TowerChip, { tower: enemyTower }),
+        units.map((unit) => /* @__PURE__ */ jsx(UnitChip, { unit }, unit.uid)),
+        props.deployable ? /* @__PURE__ */ jsxs(
+          "button",
+          {
+            type: "button",
+            onClick: () => props.onDeploy(lane),
+            style: {
+              position: "absolute",
+              right: 8,
+              top: 8,
+              fontSize: 10,
+              padding: "3px 8px",
+              borderRadius: 999,
+              border: `1px solid ${colors.gold}`,
+              background: "rgba(231,196,106,0.16)",
+              color: colors.gold,
+              cursor: "pointer",
+              fontFamily: "inherit"
+            },
+            children: [
+              "部署到",
+              lane === 0 ? "左路" : "右路"
+            ]
+          }
+        ) : null
+      ]
+    }
+  );
+}
+function TowerChip(props) {
+  const { tower } = props;
+  if (!tower) return null;
+  const left = `${tower.x / 10 * 100}%`;
+  return /* @__PURE__ */ jsxs(
+    "div",
+    {
+      style: {
+        position: "absolute",
+        left,
+        top: "50%",
+        transform: "translate(-50%,-50%)",
+        textAlign: "center",
+        opacity: tower.alive ? 1 : 0.35
+      },
+      children: [
+        /* @__PURE__ */ jsx(
+          "div",
+          {
+            style: {
+              width: 34,
+              height: 34,
+              borderRadius: 6,
+              border: `1px solid ${tower.side === "player" ? colors.blue : colors.red}`,
+              background: tower.side === "player" ? "#1e3358" : "#5c2430",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: 16
+            },
+            children: "🏰"
+          }
+        ),
+        /* @__PURE__ */ jsx("div", { style: { fontSize: 9, color: colors.faint, marginTop: 2 }, children: tower.alive ? Math.ceil(tower.hp) : "×" })
+      ]
+    }
+  );
+}
+function UnitChip(props) {
+  const { unit } = props;
+  const left = `${unit.x / 10 * 100}%`;
+  const ratio = unit.maxHp > 0 ? unit.hp / unit.maxHp : 0;
+  const tone = unit.side === "player" ? colors.blue : colors.red;
+  return /* @__PURE__ */ jsxs(
+    "div",
+    {
+      style: {
+        position: "absolute",
+        left,
+        top: "50%",
+        transform: "translate(-50%,-50%)",
+        width: 74
+      },
+      children: [
+        /* @__PURE__ */ jsx(
+          "div",
+          {
+            style: {
+              fontSize: 9.5,
+              color: colors.text,
+              background: unit.side === "player" ? "#1e3358" : "#5c2430",
+              border: `1px solid ${tone}`,
+              borderRadius: 6,
+              padding: "2px 4px",
+              textAlign: "center",
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis"
+            },
+            children: unit.card.name
+          }
+        ),
+        /* @__PURE__ */ jsx(
+          "div",
+          {
+            style: {
+              height: 4,
+              marginTop: 2,
+              borderRadius: 999,
+              background: "#0b1020",
+              overflow: "hidden"
+            },
+            children: /* @__PURE__ */ jsx(
+              "div",
+              {
+                style: {
+                  width: `${Math.max(0, Math.min(1, ratio)) * 100}%`,
+                  height: "100%",
+                  background: tone
+                }
+              }
+            )
+          }
+        ),
+        /* @__PURE__ */ jsxs("div", { style: { fontSize: 8.5, color: colors.faint, textAlign: "center" }, children: [
+          Math.ceil(unit.hp),
+          "/",
+          unit.maxHp
+        ] })
+      ]
     }
   );
 }
@@ -3431,32 +4390,67 @@ function CardEditor(props) {
                   attr
                 )) }) })
               ] }) }),
-              /* @__PURE__ */ jsx(Section, { title: selected.kind === "monster" ? "战斗数值" : "费用", children: /* @__PURE__ */ jsxs("div", { style: { display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 10 }, children: [
-                selected.kind === "monster" ? /* @__PURE__ */ jsxs(Fragment, { children: [
-                  /* @__PURE__ */ jsx(Field, { label: "等级", hint: "1-12，影响祭品", children: /* @__PURE__ */ jsx(NumInput, { value: selected.level, min: 1, max: 12, onChange: (level) => patch({ level }) }) }),
-                  /* @__PURE__ */ jsx(Field, { label: "攻击力", children: /* @__PURE__ */ jsx(
+              /* @__PURE__ */ jsxs(Section, { title: selected.kind === "monster" ? "战斗数值" : "费用", children: [
+                /* @__PURE__ */ jsxs("div", { style: { display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 10 }, children: [
+                  selected.kind === "monster" ? /* @__PURE__ */ jsxs(Fragment, { children: [
+                    /* @__PURE__ */ jsx(Field, { label: "等级", hint: "1-12，影响祭品", children: /* @__PURE__ */ jsx(NumInput, { value: selected.level, min: 1, max: 12, onChange: (level) => patch({ level }) }) }),
+                    /* @__PURE__ */ jsx(Field, { label: "攻击力", children: /* @__PURE__ */ jsx(
+                      NumInput,
+                      {
+                        value: selected.attack,
+                        min: 0,
+                        max: 99999,
+                        step: 100,
+                        onChange: (attack) => patch({ attack })
+                      }
+                    ) }),
+                    /* @__PURE__ */ jsx(Field, { label: "守备力", children: /* @__PURE__ */ jsx(
+                      NumInput,
+                      {
+                        value: selected.defense,
+                        min: 0,
+                        max: 99999,
+                        step: 100,
+                        onChange: (defense) => patch({ defense })
+                      }
+                    ) })
+                  ] }) : /* @__PURE__ */ jsx(Field, { label: "等级", children: /* @__PURE__ */ jsx(NumInput, { value: selected.level, min: 1, max: 12, onChange: (level) => patch({ level }) }) }),
+                  /* @__PURE__ */ jsx(Field, { label: "花费", hint: "召唤/发动消耗的能量", children: /* @__PURE__ */ jsx(NumInput, { value: selected.cost, min: 0, max: 30, onChange: (cost) => patch({ cost }) }) })
+                ] }),
+                /* @__PURE__ */ jsx("div", { style: { marginTop: 10, fontSize: 11, color: colors.faint }, children: "即时对战（皇室战争风）专用；回合制与影之诗模式会忽略这三项。" }),
+                /* @__PURE__ */ jsxs("div", { style: { display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: 10, marginTop: 6 }, children: [
+                  /* @__PURE__ */ jsx(Field, { label: "移动速度", hint: "格 / 秒", children: /* @__PURE__ */ jsx(
                     NumInput,
                     {
-                      value: selected.attack,
+                      value: selected.moveSpeed ?? 1.2,
                       min: 0,
-                      max: 99999,
-                      step: 100,
-                      onChange: (attack) => patch({ attack })
+                      max: 5,
+                      step: 1,
+                      onChange: (moveSpeed) => patch({ moveSpeed })
                     }
                   ) }),
-                  /* @__PURE__ */ jsx(Field, { label: "守备力", children: /* @__PURE__ */ jsx(
+                  /* @__PURE__ */ jsx(Field, { label: "攻击间隔", hint: "毫秒", children: /* @__PURE__ */ jsx(
                     NumInput,
                     {
-                      value: selected.defense,
-                      min: 0,
-                      max: 99999,
+                      value: selected.attackIntervalMs ?? 1e3,
+                      min: 200,
+                      max: 5e3,
                       step: 100,
-                      onChange: (defense) => patch({ defense })
+                      onChange: (attackIntervalMs) => patch({ attackIntervalMs })
+                    }
+                  ) }),
+                  /* @__PURE__ */ jsx(Field, { label: "攻击距离", hint: "格", children: /* @__PURE__ */ jsx(
+                    NumInput,
+                    {
+                      value: selected.range ?? 0.8,
+                      min: 0,
+                      max: 6,
+                      step: 1,
+                      onChange: (range) => patch({ range })
                     }
                   ) })
-                ] }) : /* @__PURE__ */ jsx(Field, { label: "等级", children: /* @__PURE__ */ jsx(NumInput, { value: selected.level, min: 1, max: 12, onChange: (level) => patch({ level }) }) }),
-                /* @__PURE__ */ jsx(Field, { label: "花费", hint: "召唤/发动消耗的能量", children: /* @__PURE__ */ jsx(NumInput, { value: selected.cost, min: 0, max: 30, onChange: (cost) => patch({ cost }) }) })
-              ] }) }),
+                ] })
+              ] }),
               /* @__PURE__ */ jsxs(Section, { title: "立绘 / 卡图", children: [
                 /* @__PURE__ */ jsx(Field, { label: "立绘地址", hint: "emoji:🐉 / 图片 URL / 素材路径", children: /* @__PURE__ */ jsx(
                   TextInput,
@@ -3964,6 +4958,11 @@ function Stat(props) {
     }
   );
 }
+const MODE_HINTS = {
+  duel: "回合制：攻守表示、祭品召唤、攻对攻/守对守的破坏判定，8000 LP。",
+  shadowverse: "影之诗风：主战者 20 生命，费用（PP）每回合 +1 上限 10，随从有生命值、伤害跨回合保留，可用进化点让随从 +2/+2。",
+  realtime: "即时对战：圣水随时间回复，两条兵线自动推进，先摧毁对方国王塔者胜；卡牌的攻击力=伤害、守备力=生命。"
+};
 function RulesEditor(props) {
   const { rules, onChange } = props;
   const set = (key, value) => onChange({ ...rules, [key]: value });
@@ -3982,6 +4981,29 @@ function RulesEditor(props) {
         alignContent: "start"
       },
       children: [
+        /* @__PURE__ */ jsx("div", { style: { gridColumn: "1 / -1" }, children: /* @__PURE__ */ jsxs(Panel, { title: "战斗模式", subtitle: "切换模式会套用该模式的推荐规则", children: [
+          /* @__PURE__ */ jsx("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" }, children: Object.keys(BATTLE_MODE_LABELS).map((mode) => /* @__PURE__ */ jsx(
+            Chip,
+            {
+              active: rules.battleMode === mode,
+              onClick: () => onChange({ ...rules, ...BATTLE_MODE_PRESETS[mode] }),
+              children: BATTLE_MODE_LABELS[mode]
+            },
+            mode
+          )) }),
+          /* @__PURE__ */ jsx(
+            "div",
+            {
+              style: {
+                fontSize: 11,
+                color: colors.faint,
+                marginTop: 8,
+                lineHeight: 1.7
+              },
+              children: MODE_HINTS[rules.battleMode]
+            }
+          )
+        ] }) }),
         /* @__PURE__ */ jsx(Panel, { title: "基础规则", subtitle: "生命值与资源", children: /* @__PURE__ */ jsxs("div", { style: { display: "flex", flexDirection: "column", gap: 12 }, children: [
           /* @__PURE__ */ jsx(
             NumRow,
@@ -4208,6 +5230,112 @@ function RulesEditor(props) {
             }
           )
         ] }) }),
+        rules.battleMode !== "duel" ? /* @__PURE__ */ jsx("div", { style: { gridColumn: "1 / -1" }, children: /* @__PURE__ */ jsx(
+          Panel,
+          {
+            title: "模式专属设置",
+            subtitle: BATTLE_MODE_LABELS[rules.battleMode],
+            children: /* @__PURE__ */ jsx(
+              "div",
+              {
+                style: {
+                  display: "grid",
+                  gridTemplateColumns: "repeat(3, minmax(0,1fr))",
+                  gap: 12
+                },
+                children: rules.battleMode === "shadowverse" ? /* @__PURE__ */ jsxs(Fragment, { children: [
+                  /* @__PURE__ */ jsx(
+                    NumRow,
+                    {
+                      label: "进化点",
+                      hint: "每方可用次数",
+                      value: rules.evolvePoints,
+                      min: 0,
+                      max: 9,
+                      onChange: (value) => set("evolvePoints", value)
+                    }
+                  ),
+                  /* @__PURE__ */ jsx(
+                    NumRow,
+                    {
+                      label: "进化攻击加成",
+                      value: rules.evolveAttack,
+                      min: 0,
+                      max: 20,
+                      onChange: (value) => set("evolveAttack", value)
+                    }
+                  ),
+                  /* @__PURE__ */ jsx(
+                    NumRow,
+                    {
+                      label: "进化生命加成",
+                      value: rules.evolveDefense,
+                      min: 0,
+                      max: 20,
+                      onChange: (value) => set("evolveDefense", value)
+                    }
+                  )
+                ] }) : /* @__PURE__ */ jsxs(Fragment, { children: [
+                  /* @__PURE__ */ jsx(
+                    NumRow,
+                    {
+                      label: "圣水上限",
+                      value: rules.elixirMax,
+                      min: 1,
+                      max: 20,
+                      onChange: (value) => set("elixirMax", value)
+                    }
+                  ),
+                  /* @__PURE__ */ jsx(
+                    NumRow,
+                    {
+                      label: "圣水回复（毫秒/点）",
+                      hint: "越小回复越快",
+                      value: rules.elixirRegenMs,
+                      min: 300,
+                      max: 2e4,
+                      step: 100,
+                      onChange: (value) => set("elixirRegenMs", value)
+                    }
+                  ),
+                  /* @__PURE__ */ jsx(
+                    NumRow,
+                    {
+                      label: "对局时长（秒）",
+                      value: rules.matchSeconds,
+                      min: 30,
+                      max: 900,
+                      step: 10,
+                      onChange: (value) => set("matchSeconds", value)
+                    }
+                  ),
+                  /* @__PURE__ */ jsx(
+                    NumRow,
+                    {
+                      label: "普通塔生命",
+                      value: rules.towerHp,
+                      min: 100,
+                      max: 99999,
+                      step: 100,
+                      onChange: (value) => set("towerHp", value)
+                    }
+                  ),
+                  /* @__PURE__ */ jsx(
+                    NumRow,
+                    {
+                      label: "国王塔生命",
+                      value: rules.kingTowerHp,
+                      min: 100,
+                      max: 99999,
+                      step: 100,
+                      onChange: (value) => set("kingTowerHp", value)
+                    }
+                  )
+                ] })
+              }
+            )
+          }
+        ) }) : null,
         /* @__PURE__ */ jsx("div", { style: { gridColumn: "1 / -1" }, children: /* @__PURE__ */ jsxs(
           Panel,
           {
@@ -4342,6 +5470,11 @@ function DuelApp(props) {
     getDuelState,
     getDuelState
   );
+  const realtime = useSyncExternalStore(
+    subscribeDuelState,
+    getRealtimeState,
+    getRealtimeState
+  );
   const cardsState = useMemo(() => {
     if (!cardsRaw) return { list: STARTER_CARDS, error: null };
     try {
@@ -4474,6 +5607,16 @@ function DuelApp(props) {
       else if (result.state.winner === "opponent") setLosses(losses + 1);
     }
   };
+  const startRealtimeBattle = () => {
+    const validDeck = deck.filter(
+      (entry) => cards.some((card) => card.id === entry.cardId)
+    );
+    if (validDeck.length === 0) {
+      setNotice("卡组为空，先到「卡组」页准备卡组。");
+      return;
+    }
+    setRealtimeState(startRealtime(cards, validDeck, rules));
+  };
   const handleStart = () => {
     const validDeck = deck.filter(
       (entry) => cards.some((card) => card.id === entry.cardId)
@@ -4482,7 +5625,26 @@ function DuelApp(props) {
       setNotice("卡组为空，先到「卡组」页准备卡组。");
       return;
     }
+    if (rules.battleMode === "realtime") {
+      setRealtimeState(startRealtime(cards, validDeck, rules));
+      return;
+    }
     setDuelState(startDuel(cards, validDeck, rules));
+  };
+  const handleRealtimeTick = (deltaMs) => {
+    const currentRt = getRealtimeState();
+    if (!currentRt || currentRt.winner) return;
+    setRealtimeState(tick(currentRt, deltaMs));
+  };
+  const handleRealtimeDeploy = (handIndex, lane) => {
+    const currentRt = getRealtimeState();
+    if (!currentRt) return;
+    const result = deploy(currentRt, "player", handIndex, lane);
+    if (!result.ok) {
+      if (result.message) setNotice(result.message);
+      return;
+    }
+    setRealtimeState(result.state);
   };
   const currentCards = cards;
   const effectiveSelectedId = selectedCardId && currentCards.some((card) => card.id === selectedCardId) ? selectedCardId : currentCards[0]?.id ?? null;
@@ -4593,7 +5755,18 @@ function DuelApp(props) {
           onReset: () => persistRules(DEFAULT_RULES)
         }
       ) : null,
-      tab === "battle" ? /* @__PURE__ */ jsx(
+      tab === "battle" ? rules.battleMode === "realtime" ? /* @__PURE__ */ jsx(
+        RealtimeBoard,
+        {
+          state: realtime,
+          deckCount: deckTotal,
+          deckValid,
+          onStart: startRealtimeBattle,
+          onTick: handleRealtimeTick,
+          onDeploy: handleRealtimeDeploy,
+          onExit: () => setRealtimeState(null)
+        }
+      ) : /* @__PURE__ */ jsx(
         BattleBoard,
         {
           state: duel,
@@ -4609,6 +5782,7 @@ function DuelApp(props) {
           onChangePosition: (uid) => run(changePosition(duel, uid)),
           onStartBattle: () => run(startBattlePhase(duel)),
           onEndTurn: () => run(endTurn(duel)),
+          onEvolve: (uid) => run(evolveMonster(duel, uid)),
           onExit: () => setDuelState(null)
         }
       ) : null
@@ -5178,6 +6352,38 @@ function waitForDuelEnd() {
     });
   });
 }
+function waitForRealtimeEnd() {
+  const initial = getRealtimeState();
+  if (!initial) return Promise.resolve("aborted");
+  if (initial.winner) return Promise.resolve(initial.winner);
+  return new Promise((resolve) => {
+    let settled = false;
+    let sawPanelOpen = isPanelOpen();
+    let unsubscribe = null;
+    function finish(result) {
+      if (settled) return;
+      settled = true;
+      unsubscribe?.();
+      resolve(result);
+    }
+    unsubscribe = subscribeDuelState(() => {
+      const state = getRealtimeState();
+      if (state?.winner) {
+        finish(state.winner);
+        return;
+      }
+      if (!state) {
+        finish("aborted");
+        return;
+      }
+      if (isPanelOpen()) {
+        sawPanelOpen = true;
+        return;
+      }
+      if (sawPanelOpen) finish("aborted");
+    });
+  });
+}
 const _StartBattleBlock = class _StartBattleBlock extends BlockExtension {
   async run(ctx, params) {
     const p = params;
@@ -5190,10 +6396,18 @@ const _StartBattleBlock = class _StartBattleBlock extends BlockExtension {
     const opponentDeck = resolveOpponentDeck(cards, p);
     const firstSide = p.firstSide === "opponent" ? "opponent" : "player";
     const rules = readRules(ctx);
-    setDuelState(startDuel(cards, deck, rules, opponentDeck, firstSide));
-    console.log(
-      `[决斗卡牌工坊] 开始战斗：玩家使用${note}（${deck.length} 张），${firstSide === "opponent" ? "对手先攻" : "玩家先攻"}。`
-    );
+    const realtime = rules.battleMode === "realtime";
+    if (realtime) {
+      setRealtimeState(startRealtime(cards, deck, rules, opponentDeck));
+      console.log(
+        `[决斗卡牌工坊] 开始战斗（即时模式）：玩家使用${note}（${deck.length} 张）。`
+      );
+    } else {
+      setDuelState(startDuel(cards, deck, rules, opponentDeck, firstSide));
+      console.log(
+        `[决斗卡牌工坊] 开始战斗：玩家使用${note}（${deck.length} 张），${firstSide === "opponent" ? "对手先攻" : "玩家先攻"}。`
+      );
+    }
     const openPanel = p.openPanel !== false;
     let waitForEnd = p.waitForEnd !== false;
     if (openPanel) {
@@ -5214,7 +6428,7 @@ const _StartBattleBlock = class _StartBattleBlock extends BlockExtension {
       waitForEnd = false;
     }
     if (!waitForEnd) return;
-    const result = await waitForDuelEnd();
+    const result = realtime ? await waitForRealtimeEnd() : await waitForDuelEnd();
     const variable = (p.resultVariable ?? "").trim() || "duelResult";
     try {
       ctx.variables.set(variable, result);

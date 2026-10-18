@@ -1,4 +1,4 @@
-# 发布清单 · 决斗卡牌工坊 v1.2.0
+# 发布清单 · 决斗卡牌工坊 v1.3.0
 
 面向 **LetsGal Studio 扩展工坊** 的上传准备。所有物料都已生成并校验通过。
 
@@ -6,8 +6,8 @@
 
 | 用途 | 位置 | 内容 |
 | --- | --- | --- |
-| **工坊提交（源码包）** | `submit/duel-card-forge/`<br>`submit/duel-card-forge-src-v1.2.0.zip` | `package.json` + `src/` + `sdk/` + `dist/` + `assets/` + 配置，**不含 `node_modules`**（1.9 MB） |
-| 分发给玩家（运行包） | `release/duel-card-forge/`<br>`release/duel-card-forge-v1.2.0.zip` | 只含运行时文件（约 800 KB） |
+| **工坊提交（源码包）** | `submit/duel-card-forge/`<br>`submit/duel-card-forge-src-v1.3.0.zip` | `package.json` + `src/` + `sdk/` + `dist/` + `assets/` + 配置，**不含 `node_modules`**（1.9 MB） |
+| 分发给玩家（运行包） | `release/duel-card-forge/`<br>`release/duel-card-forge-v1.3.0.zip` | 只含运行时文件（约 800 KB） |
 
 > 工坊提交校验**要求 `package.json`，也要求 `dist/index.mjs`**。所以：
 > - 提交用 `submit/duel-card-forge`（源码包）；
@@ -42,13 +42,13 @@ duel-card-forge/
 ## 三、上传前必须确认的两件事
 
 1. **作者名**：`extension.json` 里 `author` 现在是「卡牌作战自定义」，建议改成你的工坊昵称，改完重新打包（`id` 千万不要改，改了会断开设置/存档/剧本引用）。
-2. **版本号**：当前是 `1.2.0`；之后每次更新都要递增（工坊按版本判定「有新版本」）。
+2. **版本号**：当前是 `1.3.0`；之后每次更新都要递增（工坊按版本判定「有新版本」）。
 
 ## 四、工坊提交步骤
 
 1. Studio 顶部进入 **工坊**；
 2. 切到 **我发布的**，点右上角的 **提交 / 上传扩展**；
-3. 选择目录/压缩包：`submit/duel-card-forge` 或 `submit/duel-card-forge-src-v1.2.0.zip`；
+3. 选择目录/压缩包：`submit/duel-card-forge` 或 `submit/duel-card-forge-src-v1.3.0.zip`；
 4. 填写投稿信息（下面有小节可直接复制）；
 5. 截图区域拖入 `assets/screenshots/` 的 4 张图，顺序建议：卡牌库 → 对战 → 卡组 → 规则；
 6. README 区域粘贴 `README.md` 内容（或上传该文件）；
@@ -79,6 +79,9 @@ duel-card-forge/
 **1.2.0 更新说明**：
 > 「开始战斗」Block 支持指定**对手卡组**（与玩家相同 / 示例卡组 / 按「卡名*张数」自定义）与**先手**（玩家先攻 / 对手先攻）；对手先攻时会自动打完自己的首回合再把操作权交给玩家，并遵守「先攻可否攻击」规则。
 
+**1.3.0 更新说明**：
+> 新增两套可切换的战斗模式：**影之诗风**（主战者 20 生命、费用逐回合增长、随从有生命值且伤害跨回合保留、进化点 +2/+2、可直接攻击主战者）与**即时对战·皇室战争风**（圣水随时间回复、两条兵线自动推进、防御塔与国王塔、时间到按皇冠判定）。规则页顶部一键切换并套用推荐规则；卡牌编辑器新增即时模式专用的移动速度 / 攻击间隔 / 攻击距离；剧情「开始战斗」会自动按当前模式开局。
+
 ## 六、审核会看什么（本扩展的现状）
 
 | 项目 | 状态 |
@@ -97,7 +100,7 @@ duel-card-forge/
 - **自检命令**：
   - `pnpm typecheck`
   - `pnpm build`
-  - `node tools/test-engine.mjs`（54 项）
+  - `node tools/test-engine.mjs`（78 项）
   - `node tools/ssr-check.mjs`（14 项）
   - `node tools/ssr-battle.mjs`（9 项）
   - `node tools/validate-release.mjs`（用 Studio 校验器检查发布清单）

@@ -85,6 +85,12 @@ export interface CardDefinition {
   /** 结构化效果，驱动真实结算。 */
   effects: CardEffect[];
   keywords: CardKeyword[];
+  /** 即时模式：移动速度（格/秒）。 */
+  moveSpeed?: number;
+  /** 即时模式：攻击间隔（毫秒）。 */
+  attackIntervalMs?: number;
+  /** 即时模式：攻击距离（格）。 */
+  range?: number;
 }
 
 /** 对战规则：全部可视化编辑。 */
@@ -114,7 +120,26 @@ export interface DuelRules {
   firstTurnAttack: boolean;
   aiEnabled: boolean;
   deckMinSize: number;
+  /** 战斗模式：回合制（游戏王风）/ 影之诗风 / 即时对战（皇室战争风）。 */
+  battleMode: BattleMode;
+  /** 影之诗：双方进化点。 */
+  evolvePoints: number;
+  /** 影之诗：进化提升的攻击力 / 生命。 */
+  evolveAttack: number;
+  evolveDefense: number;
+  /** 即时模式：圣水上限。 */
+  elixirMax: number;
+  /** 即时模式：每回复 1 点圣水所需毫秒。 */
+  elixirRegenMs: number;
+  /** 即时模式：一局时长（秒）。 */
+  matchSeconds: number;
+  /** 即时模式：普通塔生命。 */
+  towerHp: number;
+  /** 即时模式：国王塔生命。 */
+  kingTowerHp: number;
 }
+
+export type BattleMode = "duel" | "shadowverse" | "realtime";
 
 export interface DeckEntry {
   cardId: string;
@@ -143,6 +168,65 @@ export const DEFAULT_RULES: DuelRules = {
   firstTurnAttack: false,
   aiEnabled: true,
   deckMinSize: 15,
+  battleMode: "duel",
+  evolvePoints: 3,
+  evolveAttack: 2,
+  evolveDefense: 2,
+  elixirMax: 10,
+  elixirRegenMs: 2800,
+  matchSeconds: 180,
+  towerHp: 1500,
+  kingTowerHp: 3000,
+};
+
+/** 切换战斗模式时套用的规则预设（只覆盖与该模式强相关的字段）。 */
+export const BATTLE_MODE_PRESETS: Record<BattleMode, Partial<DuelRules>> = {
+  duel: {
+    battleMode: "duel",
+    startingLp: 8000,
+    startingHand: 5,
+    drawPerTurn: 1,
+    monsterZones: 3,
+    spellZones: 2,
+    energyStart: 3,
+    energyPerTurn: 1,
+    energyMax: 10,
+    tributeEnabled: true,
+    summonPerTurn: 1,
+    firstTurnAttack: false,
+  },
+  shadowverse: {
+    battleMode: "shadowverse",
+    startingLp: 20,
+    startingHand: 4,
+    drawPerTurn: 1,
+    monsterZones: 5,
+    spellZones: 0,
+    energyStart: 1,
+    energyPerTurn: 1,
+    energyMax: 10,
+    tributeEnabled: false,
+    summonPerTurn: 9,
+    firstTurnAttack: false,
+    evolvePoints: 3,
+  },
+  realtime: {
+    battleMode: "realtime",
+    startingHand: 0,
+    drawPerTurn: 0,
+    handLimit: 0,
+    elixirMax: 10,
+    elixirRegenMs: 2800,
+    matchSeconds: 180,
+    towerHp: 1500,
+    kingTowerHp: 3000,
+  },
+};
+
+export const BATTLE_MODE_LABELS: Record<BattleMode, string> = {
+  duel: "回合制（游戏王风）",
+  shadowverse: "影之诗风",
+  realtime: "即时对战（皇室战争风）",
 };
 
 export const ATTRIBUTE_LABELS: Record<CardAttribute, string> = {
@@ -373,6 +457,15 @@ export function normalizeCard(raw: unknown): CardDefinition | null {
     description: typeof row.description === "string" ? row.description : "",
     effects,
     keywords,
+    moveSpeed: Math.max(
+      0.2,
+      Math.min(5, Number(row.moveSpeed) > 0 ? Number(row.moveSpeed) : 1.2),
+    ),
+    attackIntervalMs: num(row.attackIntervalMs, 1000, 200, 5000),
+    range: Math.max(
+      0.2,
+      Math.min(6, Number(row.range) > 0 ? Number(row.range) : 0.8),
+    ),
   };
 }
 
@@ -400,6 +493,10 @@ export function normalizeRules(raw: unknown): DuelRules {
   };
   const bool = (key: keyof DuelRules) =>
     typeof row[key] === "boolean" ? (row[key] as boolean) : (DEFAULT_RULES[key] as boolean);
+  const mode: BattleMode =
+    row.battleMode === "shadowverse" || row.battleMode === "realtime"
+      ? row.battleMode
+      : "duel";
   return {
     startingLp: num("startingLp", 100, 999999),
     startingHand: num("startingHand", 0, 8),
@@ -410,7 +507,7 @@ export function normalizeRules(raw: unknown): DuelRules {
     energyStart: num("energyStart", 0, 99),
     energyPerTurn: num("energyPerTurn", 0, 99),
     energyMax: num("energyMax", 1, 99),
-    summonPerTurn: num("summonPerTurn", 1, 5),
+    summonPerTurn: num("summonPerTurn", 1, 9),
     tributeEnabled: bool("tributeEnabled"),
     tributeLevelOne: num("tributeLevelOne", 1, 12),
     tributeLevelTwo: num("tributeLevelTwo", 1, 12),
@@ -422,5 +519,14 @@ export function normalizeRules(raw: unknown): DuelRules {
     firstTurnAttack: bool("firstTurnAttack"),
     aiEnabled: bool("aiEnabled"),
     deckMinSize: num("deckMinSize", 1, 60),
+    battleMode: mode,
+    evolvePoints: num("evolvePoints", 0, 9),
+    evolveAttack: num("evolveAttack", 0, 20),
+    evolveDefense: num("evolveDefense", 0, 20),
+    elixirMax: num("elixirMax", 1, 20),
+    elixirRegenMs: num("elixirRegenMs", 300, 20000),
+    matchSeconds: num("matchSeconds", 30, 900),
+    towerHp: num("towerHp", 100, 99999),
+    kingTowerHp: num("kingTowerHp", 100, 99999),
   };
 }

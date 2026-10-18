@@ -2,6 +2,7 @@ import React, { useMemo, useRef, useState } from "react";
 import {
   ATTRIBUTE_GLYPHS,
   ATTRIBUTE_LABELS,
+  CARD_ROLE_LABELS,
   EFFECT_LABELS,
   KEYWORD_HINTS,
   KEYWORD_LABELS,
@@ -16,6 +17,7 @@ import {
   type CardAttribute,
   type CardDefinition,
   type CardEffect,
+  type CardRole,
   type CardKeyword,
   type CardKind,
   type EffectKind,
@@ -307,6 +309,26 @@ export function CardEditor(props: {
                         }}
                       >
                         {KIND_LABELS[kind]}
+                      </Chip>
+                    ))}
+                  </div>
+                </Field>
+                <Field label="半即时定位" hint="决定这张卡在半即时模式里的用法">
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {(Object.keys(CARD_ROLE_LABELS) as CardRole[]).map((role) => (
+                      <Chip
+                        key={role}
+                        active={
+                          (selected.role ??
+                            (selected.kind === "monster"
+                              ? "unit"
+                              : selected.kind === "spell"
+                                ? "spell"
+                                : "field")) === role
+                        }
+                        onClick={() => patch({ role })}
+                      >
+                        {CARD_ROLE_LABELS[role]}
                       </Chip>
                     ))}
                   </div>

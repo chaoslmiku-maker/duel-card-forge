@@ -14,6 +14,8 @@ const MODE_HINTS: Record<BattleMode, string> = {
     "影之诗风：主战者 20 生命，费用（PP）每回合 +1 上限 10，随从有生命值、伤害跨回合保留，可用进化点让随从 +2/+2。",
   realtime:
     "即时对战：圣水随时间回复，两条兵线自动推进，先摧毁对方国王塔者胜；卡牌的攻击力=伤害、守备力=生命。",
+  skirmish:
+    "半即时：没有回合与先后手，资源每分钟回复；单位自动作战，武器由主战者挥砍并消耗耐久；飞行可越过地面单位直击主战者，带「不可被效果破坏」的单位会挡刀；时间到按场面评分判定。",
 };
 
 export function RulesEditor(props: {
@@ -279,6 +281,40 @@ export function RulesEditor(props: {
                     min={0}
                     max={20}
                     onChange={(value) => set("evolveDefense", value)}
+                  />
+                </>
+              ) : rules.battleMode === "skirmish" ? (
+                <>
+                  <NumRow
+                    label="开局资源"
+                    value={rules.manaStart}
+                    min={0}
+                    max={20}
+                    onChange={(value) => set("manaStart", value)}
+                  />
+                  <NumRow
+                    label="每分钟回复资源"
+                    hint="半即时的核心节奏"
+                    value={rules.manaPerMinute}
+                    min={1}
+                    max={120}
+                    onChange={(value) => set("manaPerMinute", value)}
+                  />
+                  <NumRow
+                    label="资源上限"
+                    value={rules.elixirMax}
+                    min={3}
+                    max={20}
+                    onChange={(value) => set("elixirMax", value)}
+                  />
+                  <NumRow
+                    label="对局时长（秒）"
+                    hint="时间到按场面评分判定"
+                    value={rules.matchSeconds}
+                    min={30}
+                    max={900}
+                    step={10}
+                    onChange={(value) => set("matchSeconds", value)}
                   />
                 </>
               ) : (

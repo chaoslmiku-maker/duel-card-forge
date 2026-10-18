@@ -29,11 +29,13 @@ function transpile(relSrc, relOut) {
 
 const engineUrl = transpile("src/engine/duel-engine.ts", "engine.mjs");
 const realtimeUrl = transpile("src/engine/realtime-engine.ts", "realtime.mjs");
+const skirmishUrl = transpile("src/engine/skirmish-engine.ts", "skirmish.mjs");
 const cardsUrl = transpile("src/data/starter-cards.ts", "starter.mjs");
 const typesUrl = transpile("src/types.ts", "types.mjs");
 
 const engine = await import(engineUrl);
 const rt = await import(realtimeUrl);
+const sk = await import(skirmishUrl);
 const { STARTER_CARDS, STARTER_DECK } = await import(cardsUrl);
 const { DEFAULT_RULES } = await import(typesUrl);
 
@@ -642,6 +644,181 @@ rsTime = {
 };
 rsTime = rt.tick(rsTime, 100);
 eq(rsTime.winner, "player", "即时：时间到按皇冠数判定胜负");
+
+// ---------------------------------------------------------------------------
+// 半即时（武器对战）
+// ---------------------------------------------------------------------------
+const skRules = {
+  ...DEFAULT_RULES,
+  battleMode: "skirmish",
+  startingLp: 30,
+  startingHand: 5,
+  manaStart: 10,
+  manaPerMinute: 10,
+  elixirMax: 10,
+  matchSeconds: 300,
+  aiEnabled: false,
+  monsterZones: 5,
+  spellZones: 1,
+};
+const skCard = (over) => ({
+  id: "sk_x",
+  name: "测试卡",
+  kind: "monster",
+  race: "测试",
+  attribute: "light",
+  level: 1,
+  attack: 10,
+  defense: 100,
+  cost: 1,
+  art: "",
+  description: "",
+  effects: [],
+  keywords: [],
+  ...over,
+});
+const skUnit = skCard({ id: "sk_unit", name: "测试单位", attack: 10, defense: 100, attackIntervalMs: 500 });
+const skWall = skCard({ id: "sk_wall", name: "测试挡刀", attack: 1, defense: 500, keywords: ["indestructible"] });
+const skFlyer = skCard({ id: "sk_flyer", name: "测试飞行", attack: 10, defense: 100, keywords: ["direct"] });
+const skWeapon = skCard({
+  id: "sk_weapon",
+  name: "测试短剑",
+  kind: "trap",
+  role: "weapon",
+  attack: 5,
+  defense: 3,
+  attackIntervalMs: 600,
+});
+const skFieldCard = skCard({ id: "sk_field", name: "测试场地", kind: "trap", role: "field", attack: 4, defense: 0 });
+const skSpell = skCard({
+  id: "sk_spell",
+  name: "测试火球",
+  kind: "spell",
+  role: "spell",
+  effects: [{ id: "e1", trigger: "on-activate", kind: "damage", target: "enemy-lp", value: 5, stat: "attack", duration: "turn" }],
+});
+const skDeath = skCard({
+  id: "sk_death",
+  name: "测试遗效",
+  attack: 0,
+  defense: 1,
+  effects: [{ id: "e2", trigger: "on-destroyed", kind: "heal", target: "self-lp", value: 7, stat: "attack", duration: "turn" }],
+});
+const skLibrary = [...library, skUnit, skWall, skFlyer, skWeapon, skFieldCard, skSpell, skDeath];
+
+let skState = sk.startSkirmish(skLibrary, deckOf(skUnit, 10), skRules);
+eq(skState.hand.player.length, 5, "半即时：起手 5 张");
+eq(skState.hero.player.hp, 30, "半即时：主战者 30 生命");
+eq(skState.mana.player, 10, "半即时：开局资源按规则");
+
+// 资源按分钟回复
+let skMana = { ...skState, mana: { player: 0, opponent: 0 } };
+for (let i = 0; i < 15; i += 1) skMana = sk.tick(skMana, 400);
+truthy(skMana.mana.player >= 1 - 1e-6, `半即时：6 秒回复约 1 点资源（${skMana.mana.player.toFixed(2)}）`);
+
+// 打出单位
+let skPlay = {
+  ...skState,
+  mana: { player: 10, opponent: 10 },
+  hand: { player: [skUnit], opponent: [] },
+};
+const skPlayResult = sk.playCard(skPlay, "player", 0);
+truthy(skPlayResult.ok, "半即时：打出单位成功");
+eq(skPlayResult.state.units.length, 1, "半即时：单位上场");
+eq(skPlayResult.state.mana.player, 9, "半即时：打出消耗资源");
+eq(skPlayResult.state.hand.player.length, 0, "半即时：手牌减少");
+
+// 单位自动攻击
+let skFight = {
+  ...skState,
+  units: [
+    { uid: "a", side: "player", card: skUnit, attack: 10, hp: 100, maxHp: 100, ace: false, flying: false, blocking: false, survivedMs: 0, experience: 0, cooldown: 0 },
+    { uid: "b", side: "opponent", card: skUnit, attack: 10, hp: 100, maxHp: 100, ace: false, flying: false, blocking: false, survivedMs: 0, experience: 0, cooldown: 0 },
+  ],
+};
+skFight = sk.tick(skFight, 600);
+eq(skFight.units.find((u) => u.uid === "b").hp, 90, "半即时：单位自动攻击对方单位");
+
+// 挡刀：非飞行单位先打挡刀单位
+let skBlock = {
+  ...skState,
+  units: [
+    { uid: "a", side: "player", card: skUnit, attack: 10, hp: 100, maxHp: 100, ace: false, flying: false, blocking: false, survivedMs: 0, experience: 0, cooldown: 0 },
+    { uid: "wall", side: "opponent", card: skWall, attack: 1, hp: 500, maxHp: 500, ace: false, flying: false, blocking: true, survivedMs: 0, experience: 0, cooldown: 0 },
+  ],
+};
+skBlock = sk.tick(skBlock, 600);
+eq(skBlock.hero.opponent.hp, 30, "半即时：挡刀单位存在时不会打到主战者");
+eq(skBlock.units.find((u) => u.uid === "wall").hp, 490, "半即时：攻击被挡刀单位接下");
+
+// 飞行：越过地面单位直击主战者
+let skFly = {
+  ...skState,
+  units: [
+    { uid: "f", side: "player", card: skFlyer, attack: 10, hp: 100, maxHp: 100, ace: false, flying: true, blocking: false, survivedMs: 0, experience: 0, cooldown: 0 },
+    { uid: "wall", side: "opponent", card: skWall, attack: 1, hp: 500, maxHp: 500, ace: false, flying: false, blocking: true, survivedMs: 0, experience: 0, cooldown: 0 },
+  ],
+};
+skFly = sk.tick(skFly, 600);
+eq(skFly.hero.opponent.hp, 20, "半即时：飞行单位越过地面单位直击主战者");
+
+// 武器：装备、攻击、掉耐久
+let skWeaponState = {
+  ...skState,
+  mana: { player: 10, opponent: 10 },
+  hand: { player: [skWeapon], opponent: [] },
+};
+const equipResult = sk.playCard(skWeaponState, "player", 0);
+truthy(equipResult.ok, "半即时：装备武器成功");
+eq(equipResult.state.hero.player.weapon.durability, 3, "半即时：武器耐久取守备力");
+const swing = sk.weaponAttack(equipResult.state, "player", null);
+truthy(swing.ok, "半即时：武器攻击成功");
+eq(swing.state.hero.opponent.hp, 25, "半即时：武器直击主战者 5 点");
+eq(swing.state.hero.player.weapon.durability, 2, "半即时：武器攻击消耗 1 点耐久");
+
+// 遗效：被破坏时回血
+let skDeathState = {
+  ...skState,
+  hero: { ...skState.hero, opponent: { ...skState.hero.opponent, hp: 20 } },
+  units: [
+    { uid: "a", side: "player", card: skUnit, attack: 10, hp: 100, maxHp: 100, ace: false, flying: false, blocking: false, survivedMs: 0, experience: 0, cooldown: 0 },
+    { uid: "d", side: "opponent", card: skDeath, attack: 0, hp: 1, maxHp: 1, ace: false, flying: false, blocking: false, survivedMs: 0, experience: 0, cooldown: 0 },
+  ],
+};
+skDeathState = sk.tick(skDeathState, 600);
+eq(skDeathState.hero.opponent.hp, 27, "半即时：遗效在被破坏时回复其主战者生命");
+
+// 场地：给全体友方加攻击
+let skFieldState = {
+  ...skState,
+  mana: { player: 10, opponent: 10 },
+  hand: { player: [skFieldCard], opponent: [] },
+  units: [
+    { uid: "a", side: "player", card: skUnit, attack: 10, hp: 100, maxHp: 100, ace: false, flying: false, blocking: false, survivedMs: 0, experience: 0, cooldown: 0 },
+  ],
+};
+const fieldResult = sk.playCard(skFieldState, "player", 0);
+truthy(fieldResult.ok, "半即时：布置场地成功");
+eq(
+  sk.effectiveUnitAttack(fieldResult.state, fieldResult.state.units[0]),
+  14,
+  "半即时：场地为友方单位 +4 攻击",
+);
+
+// 法术：直接结算
+let skSpellState = {
+  ...skState,
+  mana: { player: 10, opponent: 10 },
+  hand: { player: [skSpell], opponent: [] },
+};
+const spellResult = sk.playCard(skSpellState, "player", 0);
+truthy(spellResult.ok, "半即时：发动法术成功");
+eq(spellResult.state.hero.opponent.hp, 25, "半即时：法术造成 5 点伤害");
+
+// 时间到按场面评分
+let skTime = { ...skState, timeMs: skState.timeLimitMs - 50, hero: { player: { ...skState.hero.player, hp: 30 }, opponent: { ...skState.hero.opponent, hp: 10 } } };
+skTime = sk.tick(skTime, 100);
+eq(skTime.winner, "player", "半即时：时间到按场面评分判定");
 
 console.log(`\n${checks - failures}/${checks} 项通过`);
 if (failures > 0) process.exitCode = 1;

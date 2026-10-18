@@ -43,12 +43,15 @@ import {
   getCachedDeck,
   getDuelState,
   getRealtimeState,
+  getSkirmishState,
   isPanelOpen,
   setDuelState,
   setRealtimeState,
+  setSkirmishState,
   subscribeDuelState,
 } from "../state/duel-store";
 import { startRealtime } from "../engine/realtime-engine";
+import { startSkirmish } from "../engine/skirmish-engine";
 
 // ---------------------------------------------------------------------------
 // 公共工具
@@ -768,6 +771,44 @@ function waitForRealtimeEnd(): Promise<
   });
 }
 
+/** 半即时对战的等待：与其它模式一致，分出胜负 / 面板关闭 / 状态清空即结束。 */
+function waitForSkirmishEnd(): Promise<
+  "player" | "opponent" | "draw" | "aborted"
+> {
+  const initial = getSkirmishState();
+  if (!initial) return Promise.resolve("aborted");
+  if (initial.winner) return Promise.resolve(initial.winner);
+  return new Promise((resolve) => {
+    let settled = false;
+    let sawPanelOpen = isPanelOpen();
+    let unsubscribe: (() => void) | null = null;
+
+    function finish(result: "player" | "opponent" | "draw" | "aborted"): void {
+      if (settled) return;
+      settled = true;
+      unsubscribe?.();
+      resolve(result);
+    }
+
+    unsubscribe = subscribeDuelState(() => {
+      const state = getSkirmishState();
+      if (state?.winner) {
+        finish(state.winner);
+        return;
+      }
+      if (!state) {
+        finish("aborted");
+        return;
+      }
+      if (isPanelOpen()) {
+        sawPanelOpen = true;
+        return;
+      }
+      if (sawPanelOpen) finish("aborted");
+    });
+  });
+}
+
 export class StartBattleBlock extends BlockExtension {
   static readonly type = "dcf-start-battle";
   static readonly title = "开始战斗：在剧情中开一局";
@@ -850,10 +891,16 @@ export class StartBattleBlock extends BlockExtension {
 
     const rules = readRules(ctx);
     const realtime = rules.battleMode === "realtime";
+    const skirmish = rules.battleMode === "skirmish";
     if (realtime) {
       setRealtimeState(startRealtime(cards, deck, rules, opponentDeck));
       console.log(
         `[决斗卡牌工坊] 开始战斗（即时模式）：玩家使用${note}（${deck.length} 张）。`,
+      );
+    } else if (skirmish) {
+      setSkirmishState(startSkirmish(cards, deck, rules, opponentDeck));
+      console.log(
+        `[决斗卡牌工坊] 开始战斗（半即时模式）：玩家使用${note}（${deck.length} 张）。`,
       );
     } else {
       setDuelState(startDuel(cards, deck, rules, opponentDeck, firstSide));
@@ -889,7 +936,9 @@ export class StartBattleBlock extends BlockExtension {
 
     const result = realtime
       ? await waitForRealtimeEnd()
-      : await waitForDuelEnd();
+      : skirmish
+        ? await waitForSkirmishEnd()
+        : await waitForDuelEnd();
     const variable = (p.resultVariable ?? "").trim() || "duelResult";
     try {
       ctx.variables.set(variable, result);

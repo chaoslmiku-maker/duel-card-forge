@@ -13,10 +13,12 @@ import { STARTER_CARDS, STARTER_DECK } from "../data/starter-cards";
 import {
   getDuelState,
   getRealtimeState,
+  getSkirmishState,
   setCachedDeck,
   setDuelState,
   setPanelOpen,
   setRealtimeState,
+  setSkirmishState,
   subscribeDuelState,
 } from "../state/duel-store";
 import {
@@ -37,8 +39,15 @@ import {
   startRealtime,
   tick,
 } from "../engine/realtime-engine";
+import {
+  playCard as playSkirmishCard,
+  startSkirmish,
+  tick as tickSkirmish,
+  weaponAttack,
+} from "../engine/skirmish-engine";
 import { BattleBoard } from "./battle-board";
 import { RealtimeBoard } from "./realtime-board";
+import { SkirmishBoard } from "./skirmish-board";
 import { CardEditor } from "./card-editor";
 import { DeckBuilder } from "./deck-builder";
 import { RulesEditor } from "./rules-editor";
@@ -152,6 +161,11 @@ export function DuelApp(props: DuelAppProps): React.ReactElement {
     subscribeDuelState,
     getRealtimeState,
     getRealtimeState,
+  );
+  const skirmish = useSyncExternalStore(
+    subscribeDuelState,
+    getSkirmishState,
+    getSkirmishState,
   );
 
   const cardsState = useMemo<{ list: CardDefinition[]; error: string | null }>(() => {
@@ -316,6 +330,17 @@ export function DuelApp(props: DuelAppProps): React.ReactElement {
     setRealtimeState(startRealtime(cards, validDeck, rules));
   };
 
+  const startSkirmishBattle = () => {
+    const validDeck = deck.filter((entry) =>
+      cards.some((card) => card.id === entry.cardId),
+    );
+    if (validDeck.length === 0) {
+      setNotice("卡组为空，先到「卡组」页准备卡组。");
+      return;
+    }
+    setSkirmishState(startSkirmish(cards, validDeck, rules));
+  };
+
   const handleStart = () => {
     const validDeck = deck.filter((entry) =>
       cards.some((card) => card.id === entry.cardId),
@@ -328,7 +353,39 @@ export function DuelApp(props: DuelAppProps): React.ReactElement {
       setRealtimeState(startRealtime(cards, validDeck, rules));
       return;
     }
+    if (rules.battleMode === "skirmish") {
+      setSkirmishState(startSkirmish(cards, validDeck, rules));
+      return;
+    }
     setDuelState(startDuel(cards, validDeck, rules));
+  };
+
+  const handleSkirmishTick = (deltaMs: number) => {
+    const current = getSkirmishState();
+    if (!current || current.winner) return;
+    setSkirmishState(tickSkirmish(current, deltaMs));
+  };
+
+  const handleSkirmishPlay = (handIndex: number) => {
+    const current = getSkirmishState();
+    if (!current) return;
+    const result = playSkirmishCard(current, "player", handIndex);
+    if (!result.ok) {
+      if (result.message) setNotice(result.message);
+      return;
+    }
+    setSkirmishState(result.state);
+  };
+
+  const handleSkirmishWeapon = (targetUid: string | null) => {
+    const current = getSkirmishState();
+    if (!current) return;
+    const result = weaponAttack(current, "player", targetUid);
+    if (!result.ok) {
+      if (result.message) setNotice(result.message);
+      return;
+    }
+    setSkirmishState(result.state);
   };
 
   const handleRealtimeTick = (deltaMs: number) => {
@@ -471,6 +528,18 @@ export function DuelApp(props: DuelAppProps): React.ReactElement {
               onTick={handleRealtimeTick}
               onDeploy={handleRealtimeDeploy}
               onExit={() => setRealtimeState(null)}
+            />
+          ) : rules.battleMode === "skirmish" ? (
+            <SkirmishBoard
+              state={skirmish}
+              rules={rules}
+              deckCount={deckTotal}
+              deckValid={deckValid}
+              onStart={startSkirmishBattle}
+              onTick={handleSkirmishTick}
+              onPlay={handleSkirmishPlay}
+              onWeaponAttack={handleSkirmishWeapon}
+              onExit={() => setSkirmishState(null)}
             />
           ) : (
             <BattleBoard

@@ -397,6 +397,13 @@ const STARTER_DECK = [
   { cardId: "card_counter_trap", count: 2 },
   { cardId: "card_burst_ambush", count: 2 }
 ];
+const CARD_ROLE_LABELS = {
+  unit: "单位",
+  weapon: "武器",
+  spell: "法术",
+  field: "场地",
+  ace: "王牌"
+};
 const DEFAULT_RULES = {
   startingLp: 8e3,
   startingHand: 5,
@@ -427,7 +434,9 @@ const DEFAULT_RULES = {
   elixirRegenMs: 2800,
   matchSeconds: 180,
   towerHp: 1500,
-  kingTowerHp: 3e3
+  kingTowerHp: 3e3,
+  manaStart: 1,
+  manaPerMinute: 10
 };
 const BATTLE_MODE_PRESETS = {
   duel: {
@@ -469,12 +478,32 @@ const BATTLE_MODE_PRESETS = {
     matchSeconds: 180,
     towerHp: 1500,
     kingTowerHp: 3e3
+  },
+  skirmish: {
+    battleMode: "skirmish",
+    startingLp: 30,
+    startingHand: 5,
+    drawPerTurn: 0,
+    handLimit: 8,
+    monsterZones: 5,
+    spellZones: 1,
+    energyStart: 0,
+    energyPerTurn: 0,
+    energyMax: 0,
+    tributeEnabled: false,
+    summonPerTurn: 99,
+    firstTurnAttack: true,
+    aiEnabled: true,
+    matchSeconds: 300,
+    manaStart: 1,
+    manaPerMinute: 10
   }
 };
 const BATTLE_MODE_LABELS = {
   duel: "回合制（游戏王风）",
   shadowverse: "影之诗风",
-  realtime: "即时对战（皇室战争风）"
+  realtime: "即时对战（皇室战争风）",
+  skirmish: "半即时（武器对战）"
 };
 const ATTRIBUTE_LABELS = {
   light: "光",
@@ -511,7 +540,9 @@ const EFFECT_LABELS = {
   draw: "抽卡",
   destroy: "破坏怪兽",
   buff: "提升攻守",
-  negate: "无效攻击"
+  negate: "无效攻击",
+  disarm: "缴械（摧毁对方武器）",
+  knockback: "击退（弹回对方单位）"
 };
 const TARGET_LABELS = {
   "enemy-lp": "对方生命值",
@@ -613,7 +644,9 @@ function normalizeCard(raw) {
       "draw",
       "destroy",
       "buff",
-      "negate"
+      "negate",
+      "disarm",
+      "knockback"
     ];
     const targets = [
       "enemy-lp",
@@ -649,10 +682,12 @@ function normalizeCard(raw) {
       )
     )
   ) : [];
+  const role = row.role === "unit" || row.role === "weapon" || row.role === "spell" || row.role === "field" || row.role === "ace" ? row.role : kind === "monster" ? "unit" : kind === "spell" ? "spell" : "field";
   return {
     id: typeof row.id === "string" && row.id ? row.id : makeId("card"),
     name,
     kind,
+    role,
     race: typeof row.race === "string" && row.race.trim() ? row.race.trim() : "战士族",
     attribute,
     level: num(row.level, 4, 1, 12),
@@ -696,7 +731,7 @@ function normalizeRules(raw) {
     return Math.max(min, Math.min(max, Math.round(parsed)));
   };
   const bool = (key) => typeof row[key] === "boolean" ? row[key] : DEFAULT_RULES[key];
-  const mode = row.battleMode === "shadowverse" || row.battleMode === "realtime" ? row.battleMode : "duel";
+  const mode = row.battleMode === "shadowverse" || row.battleMode === "realtime" || row.battleMode === "skirmish" ? row.battleMode : "duel";
   return {
     startingLp: num("startingLp", 100, 999999),
     startingHand: num("startingHand", 0, 8),
@@ -727,11 +762,14 @@ function normalizeRules(raw) {
     elixirRegenMs: num("elixirRegenMs", 300, 2e4),
     matchSeconds: num("matchSeconds", 30, 900),
     towerHp: num("towerHp", 100, 99999),
-    kingTowerHp: num("kingTowerHp", 100, 99999)
+    kingTowerHp: num("kingTowerHp", 100, 99999),
+    manaStart: num("manaStart", 0, 20),
+    manaPerMinute: num("manaPerMinute", 1, 120)
   };
 }
 let currentState = null;
 let realtimeState = null;
+let skirmishState = null;
 let panelOpen = false;
 const listeners = /* @__PURE__ */ new Set();
 function notify() {
@@ -748,7 +786,10 @@ function getDuelState() {
 }
 function setDuelState(next) {
   currentState = next;
-  if (next) realtimeState = null;
+  if (next) {
+    realtimeState = null;
+    skirmishState = null;
+  }
   notify();
 }
 function subscribeDuelState(listener) {
@@ -762,7 +803,21 @@ function getRealtimeState() {
 }
 function setRealtimeState(next) {
   realtimeState = next;
-  if (next) currentState = null;
+  if (next) {
+    currentState = null;
+    skirmishState = null;
+  }
+  notify();
+}
+function getSkirmishState() {
+  return skirmishState;
+}
+function setSkirmishState(next) {
+  skirmishState = next;
+  if (next) {
+    currentState = null;
+    realtimeState = null;
+  }
   notify();
 }
 function setPanelOpen(open) {
@@ -823,7 +878,7 @@ function effectiveAttack(monster) {
 function effectiveDefense(monster) {
   return Math.max(0, monster.card.defense + monster.defMod + monster.tempDef);
 }
-function shuffle$1(items) {
+function shuffle$2(items) {
   const copy = [...items];
   for (let i = copy.length - 1; i > 0; i -= 1) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -844,7 +899,7 @@ function makeSide(library, deck, rules) {
   return {
     lp: rules.startingLp,
     energy: rules.energyStart,
-    deck: shuffle$1(cards),
+    deck: shuffle$2(cards),
     hand: [],
     graveyard: [],
     monsters: new Array(rules.monsterZones).fill(null),
@@ -859,7 +914,7 @@ function drawCards(state, side, count) {
     if (s.deck.length === 0) {
       if (current.rules.deckOutLose) {
         current = { ...current, winner: otherSide(side) };
-        log(current, "bad", `${sideName$1(side)} 卡组已抽空，判负。`);
+        log(current, "bad", `${sideName$2(side)} 卡组已抽空，判负。`);
       }
       break;
     }
@@ -870,7 +925,7 @@ function drawCards(state, side, count) {
   }
   return { state: current, drawn };
 }
-function sideName$1(side) {
+function sideName$2(side) {
   return side === "player" ? "你" : "对手";
 }
 function beginTurn(state, side, first) {
@@ -888,7 +943,7 @@ function beginTurn(state, side, first) {
     const result = drawCards(current, side, current.rules.drawPerTurn);
     current = result.state;
     if (result.drawn > 0) {
-      log(current, "info", `${sideName$1(side)} 抽了 ${result.drawn} 张卡。`);
+      log(current, "info", `${sideName$2(side)} 抽了 ${result.drawn} 张卡。`);
     }
   }
   if (current.rules.turnLimit > 0 && current.turn > current.rules.turnLimit) {
@@ -929,8 +984,8 @@ function startDuel(libraryCards, deck, rules, opponentDeck, firstSide = "player"
   if (rules.aiEnabled) return runAiTurn(state);
   return handOverToPlayer(state);
 }
-function slotOfMonster(side, uid) {
-  return side.monsters.findIndex((m) => m !== null && m.uid === uid);
+function slotOfMonster(side, uid2) {
+  return side.monsters.findIndex((m) => m !== null && m.uid === uid2);
 }
 function strongestSlot(side) {
   let best = -1;
@@ -983,7 +1038,7 @@ function applyDamage(state, side, amount, label) {
   const s = sideOf(state, side);
   const next = { ...s, lp: Math.max(0, s.lp - amount) };
   const current = withSide(state, side, next);
-  log(current, side === "player" ? "bad" : "good", `${sideName$1(side)} 受到 ${amount} 点${label}（剩余 ${next.lp}）。`);
+  log(current, side === "player" ? "bad" : "good", `${sideName$2(side)} 受到 ${amount} 点${label}（剩余 ${next.lp}）。`);
   return current;
 }
 function applyHeal(state, side, amount) {
@@ -991,7 +1046,7 @@ function applyHeal(state, side, amount) {
   const s = sideOf(state, side);
   const next = { ...s, lp: s.lp + amount };
   const current = withSide(state, side, next);
-  log(current, side === "player" ? "good" : "bad", `${sideName$1(side)} 回复 ${amount} 点生命值（当前 ${next.lp}）。`);
+  log(current, side === "player" ? "good" : "bad", `${sideName$2(side)} 回复 ${amount} 点生命值（当前 ${next.lp}）。`);
   return current;
 }
 function applyBuff(state, side, effect, selfMonsterUid) {
@@ -1018,7 +1073,7 @@ function applyBuff(state, side, effect, selfMonsterUid) {
   log(
     current,
     "info",
-    `${sideName$1(side)} 的 ${effect.stat === "attack" ? "攻击力" : "守备力"} +${amount}（${effect.target === "self-monsters" ? "全体" : "单体"}）。`
+    `${sideName$2(side)} 的 ${effect.stat === "attack" ? "攻击力" : "守备力"} +${amount}（${effect.target === "self-monsters" ? "全体" : "单体"}）。`
   );
   return current;
 }
@@ -1043,7 +1098,7 @@ function resolveEffects(state, side, card, trigger, opts = {}) {
       const result = drawCards(current, side, effect.value);
       current = result.state;
       if (result.drawn > 0) {
-        log(current, "info", `${sideName$1(side)} 因「${card.name}」抽了 ${result.drawn} 张卡。`);
+        log(current, "info", `${sideName$2(side)} 因「${card.name}」抽了 ${result.drawn} 张卡。`);
       }
       continue;
     }
@@ -1136,8 +1191,8 @@ function summonMonster(state, handUid, position, tributeUids = []) {
     return { state, ok: false, message: `需要选择 ${need} 只祭品。` };
   }
   const slots = [];
-  for (const uid of tributeUids) {
-    const slot = slotOfMonster(side, uid);
+  for (const uid2 of tributeUids) {
+    const slot = slotOfMonster(side, uid2);
     if (slot < 0) return { state, ok: false, message: "祭品选择无效。" };
     slots.push(slot);
   }
@@ -1280,7 +1335,7 @@ function triggerDefenderTrap(state, defender) {
     traps,
     graveyard: [...side.graveyard, { uid: trap.uid, card: trap.card }]
   });
-  log(current, "warn", `${sideName$1(defender)} 发动了陷阱卡「${trap.card.name}」。`);
+  log(current, "warn", `${sideName$2(defender)} 发动了陷阱卡「${trap.card.name}」。`);
   const negate = trap.card.effects.some(
     (effect) => effect.trigger === "on-activate" && effect.kind === "negate"
   );
@@ -1622,8 +1677,8 @@ function aiSummon(state, handUid, position, tributeUids) {
   const card = handCard.card;
   const monsters = [...side.monsters];
   const graveyard = [...side.graveyard];
-  for (const uid of tributeUids) {
-    const slot2 = monsters.findIndex((m) => m !== null && m.uid === uid);
+  for (const uid2 of tributeUids) {
+    const slot2 = monsters.findIndex((m) => m !== null && m.uid === uid2);
     if (slot2 >= 0) {
       const sacrifice = monsters[slot2];
       if (sacrifice) {
@@ -1764,7 +1819,7 @@ function addCardToZone(state, side, card, zone, count = 1) {
   log(
     current,
     "info",
-    `${sideName$1(side)} 获得 ${amount} 张「${card.name}」（${zone === "hand" ? "手牌" : zone === "graveyard" ? "墓地" : zone === "deck-top" ? "卡组顶" : "卡组底"}）。`
+    `${sideName$2(side)} 获得 ${amount} 张「${card.name}」（${zone === "hand" ? "手牌" : zone === "graveyard" ? "墓地" : zone === "deck-top" ? "卡组顶" : "卡组底"}）。`
   );
   return current;
 }
@@ -1794,7 +1849,7 @@ function summonDirect(state, side, card, position, slot) {
   log(
     current,
     side === "player" ? "good" : "bad",
-    `${sideName$1(side)} 的「${card.name}」被直接召唤到场上（${position === "attack" ? "攻击" : "守备"}表示）。`
+    `${sideName$2(side)} 的「${card.name}」被直接召唤到场上（${position === "attack" ? "攻击" : "守备"}表示）。`
   );
   current = resolveEffects(current, side, card, "on-summon", { selfMonsterUid: instance.uid });
   return { state: checkVictory(current), ok: true };
@@ -1828,17 +1883,17 @@ function nextUid(prefix) {
 function laneOf(index) {
   return index === 1 ? 1 : 0;
 }
-function sideName(side) {
+function sideName$1(side) {
   return side === "player" ? "你" : "对手";
 }
-function other(side) {
+function other$1(side) {
   return side === "player" ? "opponent" : "player";
 }
-function pushLog(state, tone, text) {
+function pushLog$1(state, tone, text) {
   state.log.push({ id: nextUid("log"), tone, text });
   if (state.log.length > 200) state.log.splice(0, state.log.length - 200);
 }
-function shuffle(items) {
+function shuffle$1(items) {
   const copy = [...items];
   for (let i = copy.length - 1; i > 0; i -= 1) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -1846,7 +1901,7 @@ function shuffle(items) {
   }
   return copy;
 }
-function expandDeck(deck, cards) {
+function expandDeck$1(deck, cards) {
   const byId = new Map(cards.map((card) => [card.id, card]));
   const out = [];
   for (const entry of deck) {
@@ -1855,7 +1910,7 @@ function expandDeck(deck, cards) {
     const count = Math.max(1, Math.min(9, Math.round(entry.count)));
     for (let i = 0; i < count; i += 1) out.push(card);
   }
-  return shuffle(out);
+  return shuffle$1(out);
 }
 function makeTowers(rules, side) {
   const base = side === "player" ? 3 : 7;
@@ -1882,7 +1937,7 @@ function makeTowers(rules, side) {
   });
   return towers;
 }
-function clone(state) {
+function clone$1(state) {
   return {
     ...state,
     elixir: { ...state.elixir },
@@ -1903,7 +1958,7 @@ function clone(state) {
 function drawHand(state, side) {
   while (state.hand[side].length < 4) {
     if (state.deck[side].length === 0) {
-      state.deck[side] = shuffle([...state.hand[side]]);
+      state.deck[side] = shuffle$1([...state.hand[side]]);
     }
     const next = state.deck[side].shift();
     if (!next) break;
@@ -1911,8 +1966,8 @@ function drawHand(state, side) {
   }
 }
 function startRealtime(cards, deck, rules, opponentDeck) {
-  const playerDeck = expandDeck(deck, cards);
-  const enemyDeck = expandDeck(
+  const playerDeck = expandDeck$1(deck, cards);
+  const enemyDeck = expandDeck$1(
     opponentDeck && opponentDeck.length > 0 ? opponentDeck : deck,
     cards
   );
@@ -1931,7 +1986,7 @@ function startRealtime(cards, deck, rules, opponentDeck) {
   };
   drawHand(state, "player");
   drawHand(state, "opponent");
-  pushLog(state, "info", "即时对战开始：圣水会随时间回复，摧毁对方国王塔即可获胜。");
+  pushLog$1(state, "info", "即时对战开始：圣水会随时间回复，摧毁对方国王塔即可获胜。");
   return state;
 }
 function towerAt(state, side, lane) {
@@ -1940,7 +1995,7 @@ function towerAt(state, side, lane) {
   );
 }
 function targetableTowers(state, side, lane) {
-  const enemy = other(side);
+  const enemy = other$1(side);
   const laneTower = towerAt(state, enemy, lane);
   if (laneTower) return [laneTower];
   const king = towerAt(state, enemy, "king");
@@ -1954,19 +2009,19 @@ function damageTower(state, tower, amount, attackerSide) {
   live.alive = false;
   if (live.lane === "king") {
     state.winner = attackerSide;
-    pushLog(
+    pushLog$1(
       state,
       attackerSide === "player" ? "good" : "bad",
-      `${sideName(attackerSide)}摧毁了国王塔，战斗结束。`
+      `${sideName$1(attackerSide)}摧毁了国王塔，战斗结束。`
     );
     return;
   }
   state.crowns[attackerSide] += 1;
   const label = live.lane === 0 ? "左路" : "右路";
-  pushLog(
+  pushLog$1(
     state,
     attackerSide === "player" ? "good" : "bad",
-    `${sideName(attackerSide)}推掉了${sideName(live.side)}${label}防御塔。`
+    `${sideName$1(attackerSide)}推掉了${sideName$1(live.side)}${label}防御塔。`
   );
 }
 function nearestEnemyUnit(state, unit) {
@@ -2004,7 +2059,7 @@ function removeDead(state) {
       survivors.push(unit);
       continue;
     }
-    pushLog(
+    pushLog$1(
       state,
       unit.side === "player" ? "bad" : "good",
       `${unit.card.name}被击倒。`
@@ -2012,11 +2067,11 @@ function removeDead(state) {
   }
   state.units = survivors;
 }
-function tick(state, deltaMs) {
+function tick$1(state, deltaMs) {
   if (state.winner) return state;
   const dt = Math.max(0, Math.min(500, deltaMs));
   if (dt === 0) return state;
-  const next = clone(state);
+  const next = clone$1(state);
   next.timeMs += dt;
   for (const side of ["player", "opponent"]) {
     const gain = dt / Math.max(300, next.rules.elixirRegenMs);
@@ -2093,7 +2148,7 @@ function tick(state, deltaMs) {
       else if (enemyKing > playerKing) next.winner = "opponent";
       else next.winner = "draw";
     }
-    pushLog(next, "warn", "时间到，按皇冠数与国王塔血量判定胜负。");
+    pushLog$1(next, "warn", "时间到，按皇冠数与国王塔血量判定胜负。");
   }
   return next;
 }
@@ -2107,7 +2162,7 @@ function deploy(state, side, handIndex, lane) {
   if (state.elixir[side] + 1e-6 < card.cost) {
     return { state, ok: false, message: `圣水不足（需要 ${card.cost}）。` };
   }
-  const next = clone(state);
+  const next = clone$1(state);
   next.elixir[side] = Math.max(0, next.elixir[side] - card.cost);
   next.hand[side].splice(handIndex, 1);
   drawHand(next, side);
@@ -2123,10 +2178,10 @@ function deploy(state, side, handIndex, lane) {
     x: spawnX,
     cooldown: 300
   });
-  pushLog(
+  pushLog$1(
     next,
     side === "player" ? "good" : "bad",
-    `${sideName(side)}在${laneIndex === 0 ? "左路" : "右路"}部署了${card.name}。`
+    `${sideName$1(side)}在${laneIndex === 0 ? "左路" : "右路"}部署了${card.name}。`
   );
   return { state: next, ok: true };
 }
@@ -2135,6 +2190,464 @@ function unitsOnLane(state, lane) {
 }
 function towerOf(state, side, lane) {
   return state.towers.find((tower) => tower.side === side && tower.lane === lane);
+}
+let skSeq = 0;
+function uid(prefix) {
+  skSeq += 1;
+  return `${prefix}_${skSeq}`;
+}
+function other(side) {
+  return side === "player" ? "opponent" : "player";
+}
+function sideName(side) {
+  return side === "player" ? "你" : "对手";
+}
+function pushLog(state, tone, text) {
+  state.log.push({ id: uid("log"), tone, text });
+  if (state.log.length > 220) state.log.splice(0, state.log.length - 220);
+}
+function shuffle(items) {
+  const copy = [...items];
+  for (let i = copy.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+function expandDeck(entries, cards) {
+  const byId = new Map(cards.map((card) => [card.id, card]));
+  const out = [];
+  for (const entry of entries) {
+    const card = byId.get(entry.cardId);
+    if (!card) continue;
+    const count = Math.max(1, Math.min(9, Math.round(entry.count)));
+    for (let i = 0; i < count; i += 1) out.push(card);
+  }
+  return shuffle(out);
+}
+function roleOf$1(card) {
+  if (card.role) return card.role;
+  if (card.kind === "monster") return "unit";
+  if (card.kind === "spell") return "spell";
+  return "field";
+}
+function clone(state) {
+  return {
+    ...state,
+    mana: { ...state.mana },
+    hand: { player: [...state.hand.player], opponent: [...state.hand.opponent] },
+    deck: { player: [...state.deck.player], opponent: [...state.deck.opponent] },
+    units: state.units.map((unit) => ({ ...unit })),
+    hero: {
+      player: {
+        ...state.hero.player,
+        weapon: state.hero.player.weapon ? { ...state.hero.player.weapon } : null
+      },
+      opponent: {
+        ...state.hero.opponent,
+        weapon: state.hero.opponent.weapon ? { ...state.hero.opponent.weapon } : null
+      }
+    },
+    field: { ...state.field },
+    log: [...state.log],
+    drawCooldown: { ...state.drawCooldown }
+  };
+}
+function drawOne(state, side) {
+  const deck = state.deck[side];
+  if (deck.length === 0) {
+    state.deck[side] = shuffle([...state.hand[side]]);
+    if (state.deck[side].length === 0) return null;
+  }
+  const card = state.deck[side].shift() ?? null;
+  if (card) state.hand[side].push(card);
+  return card;
+}
+const MAX_HAND = 9;
+function drawToHand(state, side) {
+  while (state.hand[side].length < MAX_HAND) {
+    const card = drawOne(state, side);
+    if (!card) break;
+    if (state.hand[side].length > 7) break;
+  }
+}
+function startSkirmish(cards, deck, rules, opponentDeck) {
+  const state = {
+    rules,
+    timeMs: 0,
+    timeLimitMs: Math.max(30, rules.matchSeconds) * 1e3,
+    mana: { player: rules.manaStart, opponent: rules.manaStart },
+    hand: { player: [], opponent: [] },
+    deck: {
+      player: expandDeck(deck, cards),
+      opponent: expandDeck(
+        opponentDeck && opponentDeck.length > 0 ? opponentDeck : deck,
+        cards
+      )
+    },
+    units: [],
+    hero: {
+      player: { hp: rules.startingLp, maxHp: rules.startingLp, weapon: null, weaponCooldown: 0 },
+      opponent: { hp: rules.startingLp, maxHp: rules.startingLp, weapon: null, weaponCooldown: 0 }
+    },
+    field: { player: null, opponent: null },
+    log: [],
+    aiCooldown: 2500,
+    drawCooldown: { player: 5e3, opponent: 5e3 }
+  };
+  for (let i = 0; i < Math.max(1, rules.startingHand); i += 1) {
+    drawOne(state, "player");
+    drawOne(state, "opponent");
+  }
+  pushLog(
+    state,
+    "info",
+    `半即时对战开始：资源每分钟回复 ${rules.manaPerMinute} 点，主战者 ${rules.startingLp} 生命，限时 ${Math.round(rules.matchSeconds / 60)} 分钟。`
+  );
+  return state;
+}
+function unitCap(state) {
+  return Math.max(1, state.rules.monsterZones);
+}
+function ownUnits(state, side) {
+  return state.units.filter((unit) => unit.side === side && unit.hp > 0);
+}
+function enemyUnits(state, side) {
+  return ownUnits(state, other(side));
+}
+function fieldBonus(state, side) {
+  const field = state.field[side];
+  return field ? Math.max(0, Math.round(field.attack)) : 0;
+}
+function effectiveUnitAttack(state, unit) {
+  return Math.max(0, unit.attack + fieldBonus(state, unit.side));
+}
+function damageHero(state, side, amount, label) {
+  if (amount <= 0) return;
+  const hero = state.hero[side];
+  hero.hp = Math.max(0, hero.hp - amount);
+  pushLog(
+    state,
+    side === "player" ? "bad" : "good",
+    `${sideName(side)}主战者受到 ${amount} 点${label}（剩余 ${hero.hp}）。`
+  );
+  if (hero.hp <= 0) {
+    state.winner = other(side);
+    pushLog(state, side === "player" ? "bad" : "good", `${sideName(other(side))}获胜。`);
+  }
+}
+function healHero(state, side, amount) {
+  if (amount <= 0) return;
+  const hero = state.hero[side];
+  hero.hp = Math.min(hero.maxHp, hero.hp + amount);
+  pushLog(
+    state,
+    side === "player" ? "good" : "bad",
+    `${sideName(side)}主战者回复 ${amount} 点（当前 ${hero.hp}）。`
+  );
+}
+function destroyUnit(state, unit, reason) {
+  const live = state.units.find((item) => item.uid === unit.uid);
+  if (!live || live.hp > 0) return;
+  state.units = state.units.filter((item) => item.uid !== unit.uid);
+  pushLog(
+    state,
+    unit.side === "player" ? "bad" : "good",
+    `${live.card.name}被${reason}破坏。`
+  );
+  for (const effect of live.card.effects) {
+    if (effect.trigger !== "on-destroyed") continue;
+    applyEffect(state, live.side, effect);
+  }
+}
+function buffOwnUnits(state, side, amount) {
+  if (amount <= 0) return;
+  for (const unit of ownUnits(state, side)) {
+    unit.attack += amount;
+  }
+  pushLog(state, side === "player" ? "good" : "bad", `${sideName(side)}全体单位攻击 +${amount}。`);
+}
+function applyEffect(state, side, effect) {
+  const enemy = other(side);
+  const value = Math.max(0, Math.round(effect.value));
+  switch (effect.kind) {
+    case "damage":
+      if (effect.target === "both-lp") {
+        damageHero(state, "player", value, "效果伤害");
+        damageHero(state, "opponent", value, "效果伤害");
+      } else {
+        damageHero(state, enemy, value, "效果伤害");
+      }
+      break;
+    case "heal":
+      healHero(state, side, value);
+      break;
+    case "draw":
+      for (let i = 0; i < Math.min(3, value); i += 1) drawOne(state, side);
+      pushLog(state, "info", `${sideName(side)}抽了 ${Math.min(3, value)} 张卡。`);
+      break;
+    case "destroy": {
+      const targets = enemyUnits(state, side);
+      if (targets.length > 0) {
+        const strongest = targets.reduce(
+          (a, b) => a.attack >= b.attack ? a : b
+        );
+        strongest.hp = 0;
+        destroyUnit(state, strongest, "效果");
+      }
+      break;
+    }
+    case "buff":
+      buffOwnUnits(state, side, value);
+      break;
+    case "disarm": {
+      const weapon = state.hero[enemy].weapon;
+      if (weapon) {
+        state.hero[enemy].weapon = null;
+        pushLog(state, side === "player" ? "good" : "bad", `缴械：${sideName(enemy)}的${weapon.card.name}被摧毁。`);
+      }
+      break;
+    }
+    case "knockback": {
+      const targets = enemyUnits(state, side);
+      if (targets.length > 0) {
+        const strongest = targets.reduce((a, b) => a.attack >= b.attack ? a : b);
+        state.units = state.units.filter((item) => item.uid !== strongest.uid);
+        if (state.hand[enemy].length < MAX_HAND) {
+          state.hand[enemy].push(strongest.card);
+        }
+        pushLog(
+          state,
+          side === "player" ? "good" : "bad",
+          `击退：${strongest.card.name}被弹回${sideName(enemy)}手牌。`
+        );
+      }
+      break;
+    }
+  }
+}
+function playCard(state, side, handIndex) {
+  if (state.winner) return { state, ok: false, message: "对局已结束。" };
+  const card = state.hand[side][handIndex];
+  if (!card) return { state, ok: false, message: "手牌里没有这张卡。" };
+  if (state.mana[side] + 1e-6 < card.cost) {
+    return { state, ok: false, message: `资源不足（需要 ${card.cost}）。` };
+  }
+  const role = roleOf$1(card);
+  if (role === "unit" || role === "ace") {
+    if (ownUnits(state, side).length >= unitCap(state)) {
+      return { state, ok: false, message: "场上单位已满。" };
+    }
+    if (role === "ace" && ownUnits(state, side).some((unit) => unit.ace)) {
+      return { state, ok: false, message: "王牌已经在场上了。" };
+    }
+  }
+  if (role === "field" && state.field[side]) {
+    return { state, ok: false, message: "场地槽已占用。" };
+  }
+  const next = clone(state);
+  next.mana[side] = Math.max(0, next.mana[side] - card.cost);
+  next.hand[side].splice(handIndex, 1);
+  if (role === "unit" || role === "ace") {
+    next.units.push({
+      uid: uid("unit"),
+      side,
+      card,
+      attack: Math.max(1, card.attack),
+      hp: Math.max(1, card.defense),
+      maxHp: Math.max(1, card.defense),
+      ace: role === "ace",
+      flying: card.keywords.includes("direct"),
+      blocking: card.keywords.includes("indestructible"),
+      survivedMs: 0,
+      experience: 0,
+      cooldown: 400
+    });
+    pushLog(
+      next,
+      side === "player" ? "good" : "bad",
+      `${sideName(side)}上场了${role === "ace" ? "王牌" : "单位"}「${card.name}」。`
+    );
+  } else if (role === "weapon") {
+    const durability = Math.max(1, card.defense);
+    next.hero[side].weapon = {
+      card,
+      attack: Math.max(1, card.attack),
+      durability,
+      maxDurability: durability,
+      cooldown: 0
+    };
+    pushLog(
+      next,
+      side === "player" ? "good" : "bad",
+      `${sideName(side)}装备武器「${card.name}」（攻击 ${card.attack} / 耐久 ${durability}）。`
+    );
+  } else if (role === "field") {
+    next.field[side] = card;
+    pushLog(
+      next,
+      side === "player" ? "good" : "bad",
+      `${sideName(side)}布置场地「${card.name}」（友方单位攻击 +${card.attack}）。`
+    );
+  } else {
+    pushLog(next, side === "player" ? "good" : "bad", `${sideName(side)}发动「${card.name}」。`);
+    for (const effect of card.effects) {
+      if (effect.trigger !== "on-activate") continue;
+      applyEffect(next, side, effect);
+    }
+  }
+  return { state: next, ok: true };
+}
+function weaponAttack(state, side, targetUid) {
+  if (state.winner) return { state, ok: false, message: "对局已结束。" };
+  const weapon = state.hero[side].weapon;
+  if (!weapon) return { state, ok: false, message: "没有装备武器。" };
+  if (state.hero[side].weaponCooldown > 0) {
+    return { state, ok: false, message: "武器还在冷却。" };
+  }
+  const next = clone(state);
+  const ownWeapon = next.hero[side].weapon;
+  if (!ownWeapon) return { state, ok: false, message: "没有装备武器。" };
+  ownWeapon.cooldown = Math.max(600, ownWeapon.card.attackIntervalMs ?? 1200);
+  next.hero[side].weaponCooldown = Math.max(600, ownWeapon.card.attackIntervalMs ?? 1200);
+  if (targetUid) {
+    const target = enemyUnits(next, side).find((unit) => unit.uid === targetUid);
+    if (!target) return { state, ok: false, message: "攻击目标无效。" };
+    target.hp = Math.max(0, target.hp - ownWeapon.attack);
+    pushLog(
+      next,
+      side === "player" ? "good" : "bad",
+      `${sideName(side)}用${ownWeapon.card.name}攻击${target.card.name}，造成 ${ownWeapon.attack} 点伤害。`
+    );
+    if (target.hp <= 0) destroyUnit(next, target, "武器");
+  } else {
+    damageHero(next, other(side), ownWeapon.attack, "武器伤害");
+  }
+  ownWeapon.durability -= 1;
+  if (ownWeapon.durability <= 0) {
+    next.hero[side].weapon = null;
+    pushLog(
+      next,
+      side === "player" ? "warn" : "info",
+      `${sideName(side)}的${ownWeapon.card.name}耐久耗尽，损坏了。`
+    );
+  }
+  return { state: next, ok: true };
+}
+function runAi(state, dt) {
+  state.aiCooldown -= dt;
+  if (state.aiCooldown > 0) return;
+  state.aiCooldown = 1800 + Math.random() * 1600;
+  const hand = state.hand.opponent;
+  let pick = -1;
+  for (let i = 0; i < hand.length; i += 1) {
+    if (hand[i].cost <= state.mana.opponent) {
+      pick = i;
+      break;
+    }
+  }
+  if (pick >= 0) {
+    const result = playCard(state, "opponent", pick);
+    if (result.ok) {
+      Object.assign(state, result.state);
+      return;
+    }
+  }
+  if (state.hero.opponent.weapon && state.hero.opponent.weaponCooldown <= 0) {
+    const targets = enemyUnits(state, "opponent");
+    const target = targets.length > 0 ? targets[0] : null;
+    const result = weaponAttack(state, "opponent", target ? target.uid : null);
+    if (result.ok) Object.assign(state, result.state);
+  }
+}
+function tick(state, deltaMs) {
+  if (state.winner) return state;
+  const dt = Math.max(0, Math.min(400, deltaMs));
+  if (dt === 0) return state;
+  const next = clone(state);
+  next.timeMs += dt;
+  const perMs = next.rules.manaPerMinute / 6e4;
+  const cap = Math.max(3, next.rules.elixirMax);
+  for (const side of ["player", "opponent"]) {
+    next.mana[side] = Math.min(cap, next.mana[side] + perMs * dt);
+    next.hero[side].weaponCooldown = Math.max(
+      0,
+      next.hero[side].weaponCooldown - dt
+    );
+  }
+  for (const side of ["player", "opponent"]) {
+    next.drawCooldown[side] -= dt;
+    if (next.drawCooldown[side] <= 0) {
+      next.drawCooldown[side] = 6e3;
+      if (next.hand[side].length < MAX_HAND) {
+        const card = drawOne(next, side);
+        if (card) drawToHand(next, side);
+      }
+    }
+  }
+  for (const unit of next.units) {
+    if (unit.hp <= 0) continue;
+    unit.cooldown = Math.max(0, unit.cooldown - dt);
+    unit.survivedMs += dt;
+    if (unit.survivedMs >= 1e4) {
+      unit.survivedMs -= 1e4;
+      unit.experience += 1;
+      unit.attack += 1;
+      pushLog(
+        next,
+        "info",
+        `${unit.card.name}积累了战斗经验，攻击力 +1（${unit.attack}）。`
+      );
+    }
+    if (unit.cooldown > 0) continue;
+    unit.cooldown = Math.max(600, unit.card.attackIntervalMs ?? 1500);
+    const enemies = enemyUnits(next, unit.side);
+    let target;
+    if (unit.flying) {
+      target = enemies.find((candidate) => candidate.flying);
+    } else {
+      const blocker = enemies.find(
+        (candidate) => candidate.blocking && !candidate.flying
+      );
+      target = blocker ?? enemies.find((candidate) => !candidate.flying);
+    }
+    if (target) {
+      target.hp = Math.max(0, target.hp - effectiveUnitAttack(next, unit));
+      pushLog(
+        next,
+        unit.side === "player" ? "good" : "bad",
+        `${unit.card.name}攻击${target.card.name}（${effectiveUnitAttack(next, unit)} 点）。`
+      );
+      if (target.hp <= 0) destroyUnit(next, target, "战斗");
+      continue;
+    }
+    if (unit.flying) {
+      damageHero(next, other(unit.side), effectiveUnitAttack(next, unit), "攻击");
+    }
+  }
+  if (next.rules.aiEnabled && !next.winner) runAi(next, dt);
+  if (!next.winner && next.timeMs >= next.timeLimitMs) {
+    const score = (side) => {
+      const units = ownUnits(next, side);
+      return next.hero[side].hp + units.reduce((sum, unit) => sum + effectiveUnitAttack(next, unit) * 2 + unit.hp, 0);
+    };
+    const playerScore = score("player");
+    const enemyScore = score("opponent");
+    next.winner = playerScore > enemyScore ? "player" : enemyScore > playerScore ? "opponent" : "draw";
+    pushLog(
+      next,
+      "warn",
+      `时间到：场面评分 ${playerScore} : ${enemyScore}。`
+    );
+  }
+  return next;
+}
+function unitsOf(state, side) {
+  return ownUnits(state, side);
+}
+function boardScore(state, side) {
+  const units = ownUnits(state, side);
+  return state.hero[side].hp + units.reduce((sum, unit) => sum + effectiveUnitAttack(state, unit) * 2 + unit.hp, 0);
 }
 const colors = {
   bg: "#0d1220",
@@ -2937,12 +3450,12 @@ function BattleBoard(props) {
   const shadowverse = state.rules.battleMode === "shadowverse";
   const handCard = selectedHand ? player.hand.find((card) => card.uid === selectedHand)?.card ?? null : null;
   const selectedMonsterObj = selectedMonster ? player.monsters.find((monster) => monster?.uid === selectedMonster) ?? null : null;
-  const toggleTribute = (uid) => {
+  const toggleTribute = (uid2) => {
     if (!pendingSummon) return;
     setTributes((current) => {
-      if (current.includes(uid)) return current.filter((item) => item !== uid);
+      if (current.includes(uid2)) return current.filter((item) => item !== uid2);
       if (current.length >= pendingSummon.need) return current;
-      return [...current, uid];
+      return [...current, uid2];
     });
   };
   const beginSummon = (position) => {
@@ -4146,6 +4659,390 @@ function UnitChip(props) {
     }
   );
 }
+function roleOf(card) {
+  if (card.role) return card.role;
+  if (card.kind === "monster") return "unit";
+  if (card.kind === "spell") return "spell";
+  return "field";
+}
+function clock(ms) {
+  const total = Math.max(0, Math.ceil(ms / 1e3));
+  return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+}
+function SkirmishBoard(props) {
+  const { state } = props;
+  const tickRef = useRef(props.onTick);
+  tickRef.current = props.onTick;
+  const [targeting, setTargeting] = useState(false);
+  const running = Boolean(state && !state.winner);
+  useEffect(() => {
+    if (!running) return;
+    const timer = window.setInterval(() => tickRef.current(100), 100);
+    return () => window.clearInterval(timer);
+  }, [running]);
+  useEffect(() => setTargeting(false), [state?.winner]);
+  if (!state) {
+    return /* @__PURE__ */ jsx("div", { style: { display: "flex", justifyContent: "center", paddingTop: 20 }, children: /* @__PURE__ */ jsxs(
+      Panel,
+      {
+        title: "半即时对战 · 准备",
+        subtitle: "没有回合与先后手，资源随时间回复",
+        style: { width: 620 },
+        bodyStyle: { display: "flex", flexDirection: "column", gap: 12 },
+        children: [
+          /* @__PURE__ */ jsxs("div", { style: { fontSize: 12, color: colors.muted, lineHeight: 1.9 }, children: [
+            "资源每分钟回复 ",
+            /* @__PURE__ */ jsx("b", { children: props.rules.manaPerMinute }),
+            " 点（开局 ",
+            props.rules.manaStart,
+            "）， 上限 ",
+            props.rules.elixirMax,
+            "；主战者 ",
+            props.rules.startingLp,
+            " 生命；限时",
+            " ",
+            Math.round(props.rules.matchSeconds / 60),
+            " 分钟，时间到按场面评分判定。 单位上场后自动作战，武器由主战者手动挥砍并消耗耐久。"
+          ] }),
+          !props.deckValid ? /* @__PURE__ */ jsx("div", { style: { fontSize: 12, color: colors.red }, children: "卡组为空或不满足规则要求，请先到「卡组」页准备一套卡组。" }) : /* @__PURE__ */ jsxs("div", { style: { fontSize: 12, color: colors.faint }, children: [
+            "当前卡组 ",
+            props.deckCount,
+            " 张。对手镜像你的卡组。"
+          ] }),
+          /* @__PURE__ */ jsx(Btn, { variant: "gold", onClick: props.onStart, disabled: !props.deckValid, children: "开始半即时对战" })
+        ]
+      }
+    ) });
+  }
+  const mana = state.mana.player;
+  const weapon = state.hero.player.weapon;
+  const enemyWeapon = state.hero.opponent.weapon;
+  return /* @__PURE__ */ jsxs("div", { style: { display: "flex", flexDirection: "column", gap: 8, height: "100%", minHeight: 0 }, children: [
+    /* @__PURE__ */ jsxs(
+      "div",
+      {
+        style: {
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          background: colors.panel,
+          border: `1px solid ${colors.borderSoft}`,
+          borderRadius: radius.md,
+          padding: "8px 12px"
+        },
+        children: [
+          /* @__PURE__ */ jsx("span", { style: { fontSize: 13, color: colors.goldSoft, fontWeight: 600 }, children: clock(state.timeLimitMs - state.timeMs) }),
+          /* @__PURE__ */ jsxs("span", { style: { fontSize: 11, color: colors.faint }, children: [
+            "场面评分 ",
+            boardScore(state, "player"),
+            " : ",
+            boardScore(state, "opponent")
+          ] }),
+          /* @__PURE__ */ jsx("div", { style: { flex: 1 } }),
+          /* @__PURE__ */ jsx("span", { style: { fontSize: 11, color: colors.faint }, children: "资源" }),
+          /* @__PURE__ */ jsx(ManaPips, { value: mana, max: Math.max(3, state.rules.elixirMax) })
+        ]
+      }
+    ),
+    /* @__PURE__ */ jsx(
+      HeroStrip,
+      {
+        state,
+        side: "opponent",
+        weapon: enemyWeapon,
+        onAttack: void 0
+      }
+    ),
+    /* @__PURE__ */ jsx(UnitRow, { state, side: "opponent", targeting, onPick: (uid2) => {
+      props.onWeaponAttack(uid2);
+      setTargeting(false);
+    } }),
+    /* @__PURE__ */ jsxs(
+      "div",
+      {
+        style: {
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          flexWrap: "wrap",
+          background: colors.panel,
+          border: `1px solid ${colors.gold}`,
+          borderRadius: radius.md,
+          padding: "8px 12px"
+        },
+        children: [
+          /* @__PURE__ */ jsx("span", { style: { fontSize: 12, color: colors.goldSoft }, children: "双方随时行动 · 无回合与先后手" }),
+          /* @__PURE__ */ jsx("div", { style: { flex: 1 } }),
+          targeting ? /* @__PURE__ */ jsxs(Fragment, { children: [
+            /* @__PURE__ */ jsx("span", { style: { fontSize: 11.5, color: colors.gold }, children: "点击对手单位作为武器目标" }),
+            /* @__PURE__ */ jsx(Btn, { size: "sm", variant: "quiet", onClick: () => setTargeting(false), children: "取消" })
+          ] }) : /* @__PURE__ */ jsxs(Fragment, { children: [
+            /* @__PURE__ */ jsxs(
+              Btn,
+              {
+                size: "sm",
+                variant: "gold",
+                disabled: !weapon || state.hero.player.weaponCooldown > 0,
+                onClick: () => props.onWeaponAttack(null),
+                children: [
+                  "武器攻击主战者",
+                  weapon ? `（${weapon.attack}）` : ""
+                ]
+              }
+            ),
+            /* @__PURE__ */ jsx(
+              Btn,
+              {
+                size: "sm",
+                disabled: !weapon || state.hero.player.weaponCooldown > 0 || unitsOf(state, "opponent").length === 0,
+                onClick: () => setTargeting(true),
+                children: "武器攻击单位"
+              }
+            )
+          ] }),
+          /* @__PURE__ */ jsx(Btn, { size: "sm", variant: "ghost", onClick: props.onExit, children: "离开" })
+        ]
+      }
+    ),
+    /* @__PURE__ */ jsx(UnitRow, { state, side: "player", targeting: false, onPick: () => void 0 }),
+    /* @__PURE__ */ jsx(HeroStrip, { state, side: "player", weapon, onAttack: void 0 }),
+    /* @__PURE__ */ jsx(
+      Panel,
+      {
+        title: `手牌 · ${state.hand.player.length}`,
+        subtitle: "点击卡牌立即打出：单位/王牌上场、武器装备、法术结算、场地铺开",
+        bodyStyle: { padding: 8 },
+        children: /* @__PURE__ */ jsxs("div", { style: { display: "flex", gap: 6, overflowX: "auto", minHeight: 176 }, children: [
+          state.hand.player.map((card, index) => {
+            const affordable = card.cost <= mana + 1e-6;
+            return /* @__PURE__ */ jsxs("div", { style: { position: "relative" }, children: [
+              /* @__PURE__ */ jsx(
+                CardFrame,
+                {
+                  card,
+                  size: "sm",
+                  dimmed: !affordable,
+                  onClick: () => props.onPlay(index)
+                }
+              ),
+              /* @__PURE__ */ jsxs(
+                "span",
+                {
+                  style: {
+                    position: "absolute",
+                    left: 4,
+                    bottom: 20,
+                    fontSize: 9,
+                    padding: "1px 5px",
+                    borderRadius: 999,
+                    background: "rgba(6,9,18,0.78)",
+                    border: `1px solid ${colors.border}`,
+                    color: colors.goldSoft
+                  },
+                  children: [
+                    CARD_ROLE_LABELS[roleOf(card)],
+                    " · ",
+                    card.cost
+                  ]
+                }
+              )
+            ] }, `${card.id}_${index}`);
+          }),
+          state.hand.player.length === 0 ? /* @__PURE__ */ jsx("div", { style: { fontSize: 11.5, color: colors.faint }, children: "手牌打空了，等待自动抽牌（每 6 秒 1 张）。" }) : null
+        ] })
+      }
+    ),
+    state.winner ? /* @__PURE__ */ jsx(
+      "div",
+      {
+        style: {
+          position: "fixed",
+          inset: 0,
+          background: "rgba(6,9,18,0.84)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 50
+        },
+        children: /* @__PURE__ */ jsxs(
+          "div",
+          {
+            style: {
+              width: 380,
+              background: colors.panel,
+              border: `1px solid ${colors.gold}`,
+              borderRadius: radius.lg,
+              padding: 22,
+              textAlign: "center"
+            },
+            children: [
+              /* @__PURE__ */ jsx("div", { style: { fontSize: 22, color: colors.goldSoft, fontWeight: 700, marginBottom: 8 }, children: state.winner === "player" ? "你赢下了这场对决" : state.winner === "opponent" ? "主战者倒下了…" : "时间到，评分相同" }),
+              /* @__PURE__ */ jsxs("div", { style: { fontSize: 12, color: colors.muted, marginBottom: 18 }, children: [
+                "场面评分 ",
+                boardScore(state, "player"),
+                " : ",
+                boardScore(state, "opponent")
+              ] }),
+              /* @__PURE__ */ jsxs("div", { style: { display: "flex", gap: 8 }, children: [
+                /* @__PURE__ */ jsx(Btn, { variant: "gold", full: true, onClick: props.onStart, children: "再来一局" }),
+                /* @__PURE__ */ jsx(Btn, { variant: "ghost", full: true, onClick: props.onExit, children: "返回" })
+              ] })
+            ]
+          }
+        )
+      }
+    ) : null
+  ] });
+}
+function ManaPips(props) {
+  const value = Math.floor(props.value);
+  const pips = [];
+  for (let i = 0; i < props.max; i += 1) {
+    const filled = i < value;
+    pips.push(
+      /* @__PURE__ */ jsx(
+        "span",
+        {
+          style: {
+            width: 12,
+            height: 12,
+            borderRadius: 3,
+            border: `1px solid ${filled ? colors.blue : colors.border}`,
+            background: filled ? "linear-gradient(180deg,#6ea8ff,#2f6bd0)" : "#0b1020",
+            display: "inline-block"
+          }
+        },
+        i
+      )
+    );
+  }
+  return /* @__PURE__ */ jsxs("div", { style: { display: "flex", alignItems: "center", gap: 4 }, children: [
+    pips,
+    /* @__PURE__ */ jsxs("span", { style: { fontSize: 11, color: colors.faint, marginLeft: 4 }, children: [
+      value,
+      "/",
+      props.max
+    ] })
+  ] });
+}
+function HeroStrip(props) {
+  const { state, side, weapon } = props;
+  const hero = state.hero[side];
+  const field = state.field[side];
+  const ratio = hero.maxHp > 0 ? hero.hp / hero.maxHp : 0;
+  return /* @__PURE__ */ jsxs(
+    "div",
+    {
+      style: {
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        background: colors.panel,
+        border: `1px solid ${side === "player" ? colors.blue : colors.red}`,
+        borderRadius: radius.md,
+        padding: "8px 12px"
+      },
+      children: [
+        /* @__PURE__ */ jsx("span", { style: { fontSize: 12, color: colors.text, minWidth: 84 }, children: side === "player" ? "你的主战者" : "对手主战者" }),
+        /* @__PURE__ */ jsxs("div", { style: { width: 200 }, children: [
+          /* @__PURE__ */ jsx("div", { style: { height: 8, borderRadius: 999, background: "#0b1020", overflow: "hidden" }, children: /* @__PURE__ */ jsx(
+            "div",
+            {
+              style: {
+                width: `${Math.max(0, Math.min(1, ratio)) * 100}%`,
+                height: "100%",
+                background: side === "player" ? "linear-gradient(90deg,#3f7ad6,#7fb2ff)" : "linear-gradient(90deg,#a13a3a,#e07777)"
+              }
+            }
+          ) }),
+          /* @__PURE__ */ jsxs("div", { style: { fontSize: 10.5, color: colors.faint, marginTop: 2 }, children: [
+            "生命 ",
+            hero.hp,
+            " / ",
+            hero.maxHp
+          ] })
+        ] }),
+        /* @__PURE__ */ jsx("div", { style: { fontSize: 11, color: weapon ? colors.goldSoft : colors.faint }, children: weapon ? `武器 ${weapon.card.name} · 攻击 ${weapon.attack} · 耐久 ${weapon.durability}/${weapon.maxDurability}` : "未装备武器" }),
+        /* @__PURE__ */ jsx("div", { style: { flex: 1 } }),
+        /* @__PURE__ */ jsx("div", { style: { fontSize: 11, color: field ? colors.goldSoft : colors.faint }, children: field ? `场地 ${field.name}（攻击 +${field.attack}）` : "无场地" })
+      ]
+    }
+  );
+}
+function UnitRow(props) {
+  const units = unitsOf(props.state, props.side);
+  return /* @__PURE__ */ jsxs(
+    "div",
+    {
+      style: {
+        display: "flex",
+        gap: 8,
+        alignItems: "flex-start",
+        minHeight: 150,
+        background: props.targeting ? "rgba(231,196,106,0.06)" : colors.bgSoft,
+        border: `1px dashed ${props.targeting ? colors.gold : colors.border}`,
+        borderRadius: radius.md,
+        padding: 8,
+        overflowX: "auto"
+      },
+      children: [
+        units.length === 0 ? /* @__PURE__ */ jsx("span", { style: { fontSize: 11.5, color: colors.faint, alignSelf: "center", paddingLeft: 8 }, children: props.side === "player" ? "你的场上没有单位" : "对手场上没有单位" }) : null,
+        units.map((unit) => /* @__PURE__ */ jsx(
+          UnitCard,
+          {
+            state: props.state,
+            unit,
+            clickable: props.targeting,
+            onClick: () => props.onPick(unit.uid)
+          },
+          unit.uid
+        ))
+      ]
+    }
+  );
+}
+function UnitCard(props) {
+  const { unit, state } = props;
+  const attack = effectiveUnitAttack(state, unit);
+  const ratio = unit.maxHp > 0 ? unit.hp / unit.maxHp : 0;
+  return /* @__PURE__ */ jsxs("div", { style: { position: "relative" }, children: [
+    /* @__PURE__ */ jsx(
+      CardFrame,
+      {
+        card: unit.card,
+        size: "sm",
+        selected: props.clickable,
+        onClick: props.clickable ? props.onClick : void 0
+      }
+    ),
+    /* @__PURE__ */ jsxs("div", { style: { display: "flex", justifyContent: "space-between", fontSize: 10, marginTop: 3 }, children: [
+      /* @__PURE__ */ jsxs("span", { style: { color: colors.goldSoft }, children: [
+        attack,
+        unit.experience > 0 ? ` (+${unit.experience})` : ""
+      ] }),
+      /* @__PURE__ */ jsxs("span", { style: { color: colors.faint }, children: [
+        unit.hp,
+        "/",
+        unit.maxHp
+      ] })
+    ] }),
+    /* @__PURE__ */ jsx("div", { style: { height: 3, borderRadius: 999, background: "#0b1020", overflow: "hidden" }, children: /* @__PURE__ */ jsx(
+      "div",
+      {
+        style: {
+          width: `${Math.max(0, Math.min(1, ratio)) * 100}%`,
+          height: "100%",
+          background: unit.side === "player" ? colors.blue : colors.red
+        }
+      }
+    ) }),
+    /* @__PURE__ */ jsxs("div", { style: { display: "flex", gap: 4, marginTop: 2, fontSize: 9, color: colors.faint }, children: [
+      unit.ace ? /* @__PURE__ */ jsx("span", { style: { color: colors.gold }, children: "王牌" }) : null,
+      unit.flying ? /* @__PURE__ */ jsx("span", { children: "飞行" }) : null,
+      unit.blocking ? /* @__PURE__ */ jsx("span", { children: "挡刀" }) : null
+    ] })
+  ] });
+}
 const TRIGGER_OPTIONS$1 = Object.keys(TRIGGER_LABELS).map((value) => ({ value, label: TRIGGER_LABELS[value] }));
 const KIND_OPTIONS$1 = Object.keys(EFFECT_LABELS).map((value) => ({ value, label: EFFECT_LABELS[value] }));
 const STAT_OPTIONS = [
@@ -4363,6 +5260,15 @@ function CardEditor(props) {
                     children: KIND_LABELS[kind]
                   },
                   kind
+                )) }) }),
+                /* @__PURE__ */ jsx(Field, { label: "半即时定位", hint: "决定这张卡在半即时模式里的用法", children: /* @__PURE__ */ jsx("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" }, children: Object.keys(CARD_ROLE_LABELS).map((role) => /* @__PURE__ */ jsx(
+                  Chip,
+                  {
+                    active: (selected.role ?? (selected.kind === "monster" ? "unit" : selected.kind === "spell" ? "spell" : "field")) === role,
+                    onClick: () => patch({ role }),
+                    children: CARD_ROLE_LABELS[role]
+                  },
+                  role
                 )) }) }),
                 /* @__PURE__ */ jsxs(Field, { label: "种族", hint: "可自由输入新种族", children: [
                   /* @__PURE__ */ jsx(
@@ -4961,7 +5867,8 @@ function Stat(props) {
 const MODE_HINTS = {
   duel: "回合制：攻守表示、祭品召唤、攻对攻/守对守的破坏判定，8000 LP。",
   shadowverse: "影之诗风：主战者 20 生命，费用（PP）每回合 +1 上限 10，随从有生命值、伤害跨回合保留，可用进化点让随从 +2/+2。",
-  realtime: "即时对战：圣水随时间回复，两条兵线自动推进，先摧毁对方国王塔者胜；卡牌的攻击力=伤害、守备力=生命。"
+  realtime: "即时对战：圣水随时间回复，两条兵线自动推进，先摧毁对方国王塔者胜；卡牌的攻击力=伤害、守备力=生命。",
+  skirmish: "半即时：没有回合与先后手，资源每分钟回复；单位自动作战，武器由主战者挥砍并消耗耐久；飞行可越过地面单位直击主战者，带「不可被效果破坏」的单位会挡刀；时间到按场面评分判定。"
 };
 function RulesEditor(props) {
   const { rules, onChange } = props;
@@ -5275,6 +6182,50 @@ function RulesEditor(props) {
                       onChange: (value) => set("evolveDefense", value)
                     }
                   )
+                ] }) : rules.battleMode === "skirmish" ? /* @__PURE__ */ jsxs(Fragment, { children: [
+                  /* @__PURE__ */ jsx(
+                    NumRow,
+                    {
+                      label: "开局资源",
+                      value: rules.manaStart,
+                      min: 0,
+                      max: 20,
+                      onChange: (value) => set("manaStart", value)
+                    }
+                  ),
+                  /* @__PURE__ */ jsx(
+                    NumRow,
+                    {
+                      label: "每分钟回复资源",
+                      hint: "半即时的核心节奏",
+                      value: rules.manaPerMinute,
+                      min: 1,
+                      max: 120,
+                      onChange: (value) => set("manaPerMinute", value)
+                    }
+                  ),
+                  /* @__PURE__ */ jsx(
+                    NumRow,
+                    {
+                      label: "资源上限",
+                      value: rules.elixirMax,
+                      min: 3,
+                      max: 20,
+                      onChange: (value) => set("elixirMax", value)
+                    }
+                  ),
+                  /* @__PURE__ */ jsx(
+                    NumRow,
+                    {
+                      label: "对局时长（秒）",
+                      hint: "时间到按场面评分判定",
+                      value: rules.matchSeconds,
+                      min: 30,
+                      max: 900,
+                      step: 10,
+                      onChange: (value) => set("matchSeconds", value)
+                    }
+                  )
                 ] }) : /* @__PURE__ */ jsxs(Fragment, { children: [
                   /* @__PURE__ */ jsx(
                     NumRow,
@@ -5475,6 +6426,11 @@ function DuelApp(props) {
     getRealtimeState,
     getRealtimeState
   );
+  const skirmish = useSyncExternalStore(
+    subscribeDuelState,
+    getSkirmishState,
+    getSkirmishState
+  );
   const cardsState = useMemo(() => {
     if (!cardsRaw) return { list: STARTER_CARDS, error: null };
     try {
@@ -5617,6 +6573,16 @@ function DuelApp(props) {
     }
     setRealtimeState(startRealtime(cards, validDeck, rules));
   };
+  const startSkirmishBattle = () => {
+    const validDeck = deck.filter(
+      (entry) => cards.some((card) => card.id === entry.cardId)
+    );
+    if (validDeck.length === 0) {
+      setNotice("卡组为空，先到「卡组」页准备卡组。");
+      return;
+    }
+    setSkirmishState(startSkirmish(cards, validDeck, rules));
+  };
   const handleStart = () => {
     const validDeck = deck.filter(
       (entry) => cards.some((card) => card.id === entry.cardId)
@@ -5629,12 +6595,41 @@ function DuelApp(props) {
       setRealtimeState(startRealtime(cards, validDeck, rules));
       return;
     }
+    if (rules.battleMode === "skirmish") {
+      setSkirmishState(startSkirmish(cards, validDeck, rules));
+      return;
+    }
     setDuelState(startDuel(cards, validDeck, rules));
+  };
+  const handleSkirmishTick = (deltaMs) => {
+    const current = getSkirmishState();
+    if (!current || current.winner) return;
+    setSkirmishState(tick(current, deltaMs));
+  };
+  const handleSkirmishPlay = (handIndex) => {
+    const current = getSkirmishState();
+    if (!current) return;
+    const result = playCard(current, "player", handIndex);
+    if (!result.ok) {
+      if (result.message) setNotice(result.message);
+      return;
+    }
+    setSkirmishState(result.state);
+  };
+  const handleSkirmishWeapon = (targetUid) => {
+    const current = getSkirmishState();
+    if (!current) return;
+    const result = weaponAttack(current, "player", targetUid);
+    if (!result.ok) {
+      if (result.message) setNotice(result.message);
+      return;
+    }
+    setSkirmishState(result.state);
   };
   const handleRealtimeTick = (deltaMs) => {
     const currentRt = getRealtimeState();
     if (!currentRt || currentRt.winner) return;
-    setRealtimeState(tick(currentRt, deltaMs));
+    setRealtimeState(tick$1(currentRt, deltaMs));
   };
   const handleRealtimeDeploy = (handIndex, lane) => {
     const currentRt = getRealtimeState();
@@ -5766,6 +6761,19 @@ function DuelApp(props) {
           onDeploy: handleRealtimeDeploy,
           onExit: () => setRealtimeState(null)
         }
+      ) : rules.battleMode === "skirmish" ? /* @__PURE__ */ jsx(
+        SkirmishBoard,
+        {
+          state: skirmish,
+          rules,
+          deckCount: deckTotal,
+          deckValid,
+          onStart: startSkirmishBattle,
+          onTick: handleSkirmishTick,
+          onPlay: handleSkirmishPlay,
+          onWeaponAttack: handleSkirmishWeapon,
+          onExit: () => setSkirmishState(null)
+        }
       ) : /* @__PURE__ */ jsx(
         BattleBoard,
         {
@@ -5779,10 +6787,10 @@ function DuelApp(props) {
           onActivateSpell: (handUid) => run(activateSpell(duel, handUid)),
           onSetTrap: (handUid) => run(setTrap(duel, handUid)),
           onAttack: (attackerUid, targetUid) => run(declareAttack(duel, attackerUid, targetUid)),
-          onChangePosition: (uid) => run(changePosition(duel, uid)),
+          onChangePosition: (uid2) => run(changePosition(duel, uid2)),
           onStartBattle: () => run(startBattlePhase(duel)),
           onEndTurn: () => run(endTurn(duel)),
-          onEvolve: (uid) => run(evolveMonster(duel, uid)),
+          onEvolve: (uid2) => run(evolveMonster(duel, uid2)),
           onExit: () => setDuelState(null)
         }
       ) : null
@@ -6384,6 +7392,38 @@ function waitForRealtimeEnd() {
     });
   });
 }
+function waitForSkirmishEnd() {
+  const initial = getSkirmishState();
+  if (!initial) return Promise.resolve("aborted");
+  if (initial.winner) return Promise.resolve(initial.winner);
+  return new Promise((resolve) => {
+    let settled = false;
+    let sawPanelOpen = isPanelOpen();
+    let unsubscribe = null;
+    function finish(result) {
+      if (settled) return;
+      settled = true;
+      unsubscribe?.();
+      resolve(result);
+    }
+    unsubscribe = subscribeDuelState(() => {
+      const state = getSkirmishState();
+      if (state?.winner) {
+        finish(state.winner);
+        return;
+      }
+      if (!state) {
+        finish("aborted");
+        return;
+      }
+      if (isPanelOpen()) {
+        sawPanelOpen = true;
+        return;
+      }
+      if (sawPanelOpen) finish("aborted");
+    });
+  });
+}
 const _StartBattleBlock = class _StartBattleBlock extends BlockExtension {
   async run(ctx, params) {
     const p = params;
@@ -6397,10 +7437,16 @@ const _StartBattleBlock = class _StartBattleBlock extends BlockExtension {
     const firstSide = p.firstSide === "opponent" ? "opponent" : "player";
     const rules = readRules(ctx);
     const realtime = rules.battleMode === "realtime";
+    const skirmish = rules.battleMode === "skirmish";
     if (realtime) {
       setRealtimeState(startRealtime(cards, deck, rules, opponentDeck));
       console.log(
         `[决斗卡牌工坊] 开始战斗（即时模式）：玩家使用${note}（${deck.length} 张）。`
+      );
+    } else if (skirmish) {
+      setSkirmishState(startSkirmish(cards, deck, rules, opponentDeck));
+      console.log(
+        `[决斗卡牌工坊] 开始战斗（半即时模式）：玩家使用${note}（${deck.length} 张）。`
       );
     } else {
       setDuelState(startDuel(cards, deck, rules, opponentDeck, firstSide));
@@ -6428,7 +7474,7 @@ const _StartBattleBlock = class _StartBattleBlock extends BlockExtension {
       waitForEnd = false;
     }
     if (!waitForEnd) return;
-    const result = realtime ? await waitForRealtimeEnd() : await waitForDuelEnd();
+    const result = realtime ? await waitForRealtimeEnd() : skirmish ? await waitForSkirmishEnd() : await waitForDuelEnd();
     const variable = (p.resultVariable ?? "").trim() || "duelResult";
     try {
       ctx.variables.set(variable, result);

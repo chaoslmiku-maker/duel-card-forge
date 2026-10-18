@@ -28,7 +28,9 @@ export type EffectKind =
   | "draw"
   | "destroy"
   | "buff"
-  | "negate";
+  | "negate"
+  | "disarm"
+  | "knockback";
 
 export type EffectTarget =
   | "enemy-lp"
@@ -65,10 +67,23 @@ export type CardKeyword =
   | "immune"
   | "indestructible";
 
+/** 半即时模式的卡牌定位。缺省时按 kind 推导：怪兽→单位，魔法→法术，陷阱→场地。 */
+export type CardRole = "unit" | "weapon" | "spell" | "field" | "ace";
+
+export const CARD_ROLE_LABELS: Record<CardRole, string> = {
+  unit: "单位",
+  weapon: "武器",
+  spell: "法术",
+  field: "场地",
+  ace: "王牌",
+};
+
 export interface CardDefinition {
   id: string;
   name: string;
   kind: CardKind;
+  /** 半即时模式定位；不填按 kind 推导。 */
+  role?: CardRole;
   /** 种族（龙族、魔法师族……）。自由文本，可新增。 */
   race: string;
   attribute: CardAttribute;
@@ -137,9 +152,13 @@ export interface DuelRules {
   towerHp: number;
   /** 即时模式：国王塔生命。 */
   kingTowerHp: number;
+  /** 半即时：开局资源。 */
+  manaStart: number;
+  /** 半即时：每分钟回复的资源。 */
+  manaPerMinute: number;
 }
 
-export type BattleMode = "duel" | "shadowverse" | "realtime";
+export type BattleMode = "duel" | "shadowverse" | "realtime" | "skirmish";
 
 export interface DeckEntry {
   cardId: string;
@@ -177,6 +196,8 @@ export const DEFAULT_RULES: DuelRules = {
   matchSeconds: 180,
   towerHp: 1500,
   kingTowerHp: 3000,
+  manaStart: 1,
+  manaPerMinute: 10,
 };
 
 /** 切换战斗模式时套用的规则预设（只覆盖与该模式强相关的字段）。 */
@@ -221,12 +242,32 @@ export const BATTLE_MODE_PRESETS: Record<BattleMode, Partial<DuelRules>> = {
     towerHp: 1500,
     kingTowerHp: 3000,
   },
+  skirmish: {
+    battleMode: "skirmish",
+    startingLp: 30,
+    startingHand: 5,
+    drawPerTurn: 0,
+    handLimit: 8,
+    monsterZones: 5,
+    spellZones: 1,
+    energyStart: 0,
+    energyPerTurn: 0,
+    energyMax: 0,
+    tributeEnabled: false,
+    summonPerTurn: 99,
+    firstTurnAttack: true,
+    aiEnabled: true,
+    matchSeconds: 300,
+    manaStart: 1,
+    manaPerMinute: 10,
+  },
 };
 
 export const BATTLE_MODE_LABELS: Record<BattleMode, string> = {
   duel: "回合制（游戏王风）",
   shadowverse: "影之诗风",
   realtime: "即时对战（皇室战争风）",
+  skirmish: "半即时（武器对战）",
 };
 
 export const ATTRIBUTE_LABELS: Record<CardAttribute, string> = {
@@ -269,6 +310,8 @@ export const EFFECT_LABELS: Record<EffectKind, string> = {
   destroy: "破坏怪兽",
   buff: "提升攻守",
   negate: "无效攻击",
+  disarm: "缴械（摧毁对方武器）",
+  knockback: "击退（弹回对方单位）",
 };
 
 export const TARGET_LABELS: Record<EffectTarget, string> = {
@@ -399,6 +442,8 @@ export function normalizeCard(raw: unknown): CardDefinition | null {
           "destroy",
           "buff",
           "negate",
+          "disarm",
+          "knockback",
         ];
         const targets: EffectTarget[] = [
           "enemy-lp",
@@ -443,10 +488,23 @@ export function normalizeCard(raw: unknown): CardDefinition | null {
         ),
       )
     : [];
+  const role: CardRole =
+    row.role === "unit" ||
+    row.role === "weapon" ||
+    row.role === "spell" ||
+    row.role === "field" ||
+    row.role === "ace"
+      ? row.role
+      : kind === "monster"
+        ? "unit"
+        : kind === "spell"
+          ? "spell"
+          : "field";
   return {
     id: typeof row.id === "string" && row.id ? row.id : makeId("card"),
     name,
     kind,
+    role,
     race: typeof row.race === "string" && row.race.trim() ? row.race.trim() : "战士族",
     attribute,
     level: num(row.level, 4, 1, 12),
@@ -494,7 +552,9 @@ export function normalizeRules(raw: unknown): DuelRules {
   const bool = (key: keyof DuelRules) =>
     typeof row[key] === "boolean" ? (row[key] as boolean) : (DEFAULT_RULES[key] as boolean);
   const mode: BattleMode =
-    row.battleMode === "shadowverse" || row.battleMode === "realtime"
+    row.battleMode === "shadowverse" ||
+    row.battleMode === "realtime" ||
+    row.battleMode === "skirmish"
       ? row.battleMode
       : "duel";
   return {
@@ -528,5 +588,7 @@ export function normalizeRules(raw: unknown): DuelRules {
     matchSeconds: num("matchSeconds", 30, 900),
     towerHp: num("towerHp", 100, 99999),
     kingTowerHp: num("kingTowerHp", 100, 99999),
+    manaStart: num("manaStart", 0, 20),
+    manaPerMinute: num("manaPerMinute", 1, 120),
   };
 }

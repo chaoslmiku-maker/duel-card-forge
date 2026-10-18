@@ -14,10 +14,12 @@
  */
 import type { DuelState } from "../engine/duel-engine";
 import type { RtState } from "../engine/realtime-engine";
+import type { SkState } from "../engine/skirmish-engine";
 import type { DeckEntry } from "../types";
 
 let currentState: DuelState | null = null;
 let realtimeState: RtState | null = null;
+let skirmishState: SkState | null = null;
 let panelOpen = false;
 const listeners = new Set<() => void>();
 
@@ -37,7 +39,10 @@ export function getDuelState(): DuelState | null {
 
 export function setDuelState(next: DuelState | null): void {
   currentState = next;
-  if (next) realtimeState = null;
+  if (next) {
+    realtimeState = null;
+    skirmishState = null;
+  }
   notify();
 }
 
@@ -55,7 +60,24 @@ export function getRealtimeState(): RtState | null {
 
 export function setRealtimeState(next: RtState | null): void {
   realtimeState = next;
-  if (next) currentState = null;
+  if (next) {
+    currentState = null;
+    skirmishState = null;
+  }
+  notify();
+}
+
+/** 半即时对战状态。 */
+export function getSkirmishState(): SkState | null {
+  return skirmishState;
+}
+
+export function setSkirmishState(next: SkState | null): void {
+  skirmishState = next;
+  if (next) {
+    currentState = null;
+    realtimeState = null;
+  }
   notify();
 }
 

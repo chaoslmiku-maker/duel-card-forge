@@ -9,6 +9,7 @@ import { BattleBoard } from "../src/ui/battle-board";
 import { DeckBuilder } from "../src/ui/deck-builder";
 import { RulesEditor } from "../src/ui/rules-editor";
 import { RealtimeBoard } from "../src/ui/realtime-board";
+import { SkirmishBoard } from "../src/ui/skirmish-board";
 import { STARTER_CARDS, STARTER_DECK } from "../src/data/starter-cards";
 import { DEFAULT_RULES, type DeckEntry } from "../src/types";
 import {
@@ -17,6 +18,7 @@ import {
   type MonsterPosition,
 } from "../src/engine/duel-engine";
 import { startRealtime, type RtState } from "../src/engine/realtime-engine";
+import { startSkirmish, type SkState } from "../src/engine/skirmish-engine";
 import { PreviewProvider, type PreviewContext } from "./sdk-shim";
 
 const settingsStore: Record<string, string> = { cardsJson: "", rulesJson: "" };
@@ -377,6 +379,116 @@ function DemoSV(): React.ReactElement {
   );
 }
 
+function DemoSkirmish(): React.ReactElement {
+  const rules = React.useMemo(
+    () => ({
+      ...DEFAULT_RULES,
+      battleMode: "skirmish" as const,
+      startingLp: 30,
+      startingHand: 5,
+      manaStart: 1,
+      manaPerMinute: 10,
+      matchSeconds: 300,
+      aiEnabled: false,
+      monsterZones: 5,
+    }),
+    [],
+  );
+  const state = React.useMemo<SkState>(() => {
+    const base = startSkirmish(STARTER_CARDS, STARTER_DECK, rules);
+    const card = (index: number) => STARTER_CARDS[index];
+    const unit = (
+      uid: string,
+      index: number,
+      extra: Partial<{
+        attack: number;
+        hp: number;
+        flying: boolean;
+        blocking: boolean;
+        ace: boolean;
+        experience: number;
+      }> = {},
+    ) => ({
+      uid,
+      side: (uid.startsWith("sp") ? "player" : "opponent") as "player" | "opponent",
+      card: card(index),
+      attack: extra.attack ?? card(index).attack,
+      hp: extra.hp ?? card(index).defense,
+      maxHp: card(index).defense,
+      ace: extra.ace ?? false,
+      flying: extra.flying ?? false,
+      blocking: extra.blocking ?? false,
+      survivedMs: 0,
+      experience: extra.experience ?? 0,
+      cooldown: 0,
+    });
+    return {
+      ...base,
+      timeMs: 96000,
+      mana: { player: 6, opponent: 4 },
+      hero: {
+        player: {
+          hp: 24,
+          maxHp: 30,
+          weapon: {
+            card: card(16),
+            attack: 6,
+            durability: 2,
+            maxDurability: 3,
+            cooldown: 0,
+          },
+          weaponCooldown: 0,
+        },
+        opponent: {
+          hp: 18,
+          maxHp: 30,
+          weapon: {
+            card: card(15),
+            attack: 4,
+            durability: 3,
+            maxDurability: 4,
+            cooldown: 0,
+          },
+          weaponCooldown: 0,
+        },
+      },
+      field: { player: { ...card(14), name: "雷鸣鸟领域", attack: 300, role: "field" as const }, opponent: null },
+      units: [
+        unit("sp1", 0, { experience: 2 }),
+        unit("sp2", 4, { flying: true }),
+        unit("op1", 3, { blocking: true, hp: 700 }),
+        unit("op2", 7, { attack: 2200, hp: 900 }),
+      ],
+      hand: {
+        player: [card(2), card(5), card(13), card(14)],
+        opponent: [card(1), card(6), card(10)],
+      },
+      log: [
+        { id: "k1", tone: "info", text: "半即时对战开始：资源每分钟回复 10 点。" },
+        { id: "k2", tone: "good", text: "你装备武器「爆裂伏击」。", },
+        { id: "k3", tone: "bad", text: "对手上场了「铁壁守卫」。", },
+      ],
+    };
+  }, [rules]);
+
+  const noop = () => undefined;
+  return (
+    <div style={{ padding: 12, height: "100%", boxSizing: "border-box" }}>
+      <SkirmishBoard
+        state={state}
+        rules={rules}
+        deckCount={36}
+        deckValid
+        onStart={noop}
+        onTick={noop}
+        onPlay={noop}
+        onWeaponAttack={noop}
+        onExit={noop}
+      />
+    </div>
+  );
+}
+
 function DeckDemo(): React.ReactElement {
   return (
     <div style={{ padding: 12, height: "100%", boxSizing: "border-box" }}>
@@ -403,7 +515,7 @@ function RulesDemo(): React.ReactElement {
   );
 }
 
-type View = "app" | "battle" | "deck" | "rules" | "realtime" | "sv";
+type View = "app" | "battle" | "deck" | "rules" | "realtime" | "sv" | "skirmish";
 
 function readView(): View {
   const hash = window.location.hash.replace(/^#/, "");
@@ -411,7 +523,8 @@ function readView(): View {
     hash === "deck" ||
     hash === "rules" ||
     hash === "realtime" ||
-    hash === "sv"
+    hash === "sv" ||
+    hash === "skirmish"
     ? hash
     : "app";
 }
@@ -431,6 +544,8 @@ function Root(): React.ReactElement {
         <DemoRealtime />
       ) : view === "sv" ? (
         <DemoSV />
+      ) : view === "skirmish" ? (
+        <DemoSkirmish />
       ) : view === "deck" ? (
         <DeckDemo />
       ) : view === "rules" ? (

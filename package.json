@@ -1,0 +1,26 @@
+{
+  "name": "duel-card-forge",
+  "private": true,
+  "version": "1.0.0",
+  "description": "决斗卡牌工坊 —— 可视化自由编辑规则的卡牌战斗扩展（LetsGal Studio / AVG Engine）",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build": "vite build && node scripts/postbuild.mjs",
+    "watch": "vite build --watch",
+    "typecheck": "tsc --noEmit",
+    "preview:build": "vite build --config vite.preview.config.ts",
+    "test": "node tools/test-engine.mjs && node tools/ssr-check.mjs && node tools/ssr-battle.mjs",
+    "pack:release": "node scripts/pack-release.mjs",
+    "validate": "node tools/validate-release.mjs submit/duel-card-forge"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.11"
+  }
+}

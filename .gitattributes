@@ -1,0 +1,20 @@
+# 统一换行符：仓库内一律 LF，避免 Windows/macOS 协作时整文件 diff
+* text=auto eol=lf
+
+# 二进制文件不做换行转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+
+# 构建产物按生成文件处理，不在 diff 里统计行数
+dist/** linguist-generated=true
+
+# 锁文件与生成物在 GitHub 语言统计里不计入
+pnpm-lock.yaml linguist-generated=true
+dist/index.js linguist-generated=true
+dist/index.mjs linguist-generated=true
+dist/*.map linguist-generated=true

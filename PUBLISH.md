@@ -1,0 +1,97 @@
+# 发布清单 · 决斗卡牌工坊 v1.0.0
+
+面向 **LetsGal Studio 扩展工坊** 的上传准备。所有物料都已生成并校验通过。
+
+## 一、两种包，别用错
+
+| 用途 | 位置 | 内容 |
+| --- | --- | --- |
+| **工坊提交（源码包）** | `submit/duel-card-forge/`<br>`submit/duel-card-forge-src-v1.0.0.zip` | `package.json` + `src/` + `sdk/` + `dist/` + `assets/` + 配置，**不含 `node_modules`**（1.9 MB） |
+| 分发给玩家（运行包） | `release/duel-card-forge/`<br>`release/duel-card-forge-v1.0.0.zip` | 只含运行时文件（约 800 KB） |
+
+> 工坊提交校验**要求 `package.json`，也要求 `dist/index.mjs`**。所以：
+> - 提交用 `submit/duel-card-forge`（源码包）；
+> - `release/` 只用于「把扩展直接发给别人导入」，拿去提交会报「源码包里找不到 package.json」。
+
+源码包结构：
+
+```
+duel-card-forge/
+├── extension.json
+├── package.json
+├── pnpm-lock.yaml
+├── tsconfig.json
+├── vite.config.ts / vite.preview.config.ts
+├── README.md / PUBLISH.md
+├── scripts/postbuild.mjs
+├── src/                  ← 全部源码
+├── sdk/                  ← Studio SDK 副本
+├── dist/                 ← index.js / index.mjs / map
+├── assets/               ← 图标 + 4 张截图
+├── preview/              ← 浏览器预览页
+└── tools/                ← 自测脚本
+```
+
+## 二、两个常见报错
+
+| 报错 | 原因 | 处理 |
+| --- | --- | --- |
+| **找不到构建产物**：请生成 `dist/index.mjs` | 提交包里只有 `dist/index.js` | `pnpm build` 会自动复制出 `dist/index.mjs`；已包含在 `submit/` 与 `release/` 里 |
+| **源码包里找不到 package.json** | 提交了纯运行包 `release/` | 改提交 `submit/duel-card-forge`（或对应 zip） |
+
+## 三、上传前必须确认的两件事
+
+1. **作者名**：`extension.json` 里 `author` 现在是「卡牌作战自定义」，建议改成你的工坊昵称，改完重新打包（`id` 千万不要改，改了会断开设置/存档/剧本引用）。
+2. **版本号**：首次发布用 `1.0.0`；之后每次更新都要递增（工坊按版本判定「有新版本」）。
+
+## 四、工坊提交步骤
+
+1. Studio 顶部进入 **工坊**；
+2. 切到 **我发布的**，点右上角的 **提交 / 上传扩展**；
+3. 选择目录/压缩包：`submit/duel-card-forge` 或 `submit/duel-card-forge-src-v1.0.0.zip`；
+4. 填写投稿信息（下面有小节可直接复制）；
+5. 截图区域拖入 `assets/screenshots/` 的 4 张图，顺序建议：卡牌库 → 对战 → 卡组 → 规则；
+6. README 区域粘贴 `README.md` 内容（或上传该文件）；
+7. 提交，等待审核；审核状态与「提交新版本」都在 **我发布的** 里。
+
+## 五、投稿文案（可直接复制）
+
+**标题**：决斗卡牌工坊
+
+**一句话简介**：
+> 攻击力、守备力、种族、花费、效果、立绘全部可视化编辑的游戏王风卡牌对战扩展，对战规则也能随时改。
+
+**详细简介**：
+> 决斗卡牌工坊把「做卡」和「打牌」放进同一个面板：左边改卡，右边卡面实时预览；规则页调生命值、能量、召唤次数、祭品等级、穿透与胜负条件，改完立刻生效。
+> 内置 17 张示例卡与 36 张示例卡组，装好即可开打；卡牌库支持导出/导入 JSON，方便把整套卡搬到别的项目。
+> 对战按游戏王式规则结算：攻守表示、祭品召唤、攻对攻比攻击力、攻对守比守备力、穿透、陷阱在攻击宣言时自动触发。
+> 剧情里还能用「印卡 / 加入卡牌 / 修改卡牌 / 直接召唤」四个 Block 实时干预牌局：临场印出王牌、改 BOSS 的攻击力、把角色专属卡直接拍上场，面板会立即刷新。
+> 卡牌与规则保存在项目设置里（创作者内容），卡组与战绩保存在存档里（玩家进度）。
+
+**标签建议**：卡牌、卡牌战斗、小游戏、回合制、对战、游戏王、可视化编辑、规则自定义
+
+**首版更新说明**：
+> 1.0.0 首次发布：卡牌库可视化编辑（攻击/守备/种族/花费/效果/立绘/关键词）、卡组构筑、完整规则编辑、游戏王式对战与 AI 对手、JSON 导入导出、四个剧情 Block（印卡 / 加入卡牌 / 修改卡牌 / 直接召唤）、剧本方法（打开面板 / 重置示例卡组 / 读取卡牌数量）。
+
+## 六、审核会看什么（本扩展的现状）
+
+| 项目 | 状态 |
+| --- | --- |
+| `extension.json` 合法性 | 已用 Studio 自带校验器 `sdk/types/validate-manifest.ts` 校验通过 |
+| 权限声明 | `permissions: []`，不申请任何敏感权限 |
+| 网络访问 | 无；立绘支持填 URL，但扩展自身不发请求，由宿主渲染 `<img>` |
+| 外部依赖 | 无；`react` / `react-dom` / `@avg-studio/sdk` 全部外置，由宿主提供 |
+| 风险分级 | `riskTier: "safe"` |
+| 产物大小 | `dist/index.mjs` 176 KB（含 sourcemap 共约 490 KB） |
+
+## 七、发布后的维护
+
+- **改卡/改规则**：不需要重新发版，玩家在面板里改的是项目设置。
+- **改代码/加功能**：改 `src/` → `pnpm build` → 递增 `extension.json.version` → 重新打包 → 在「我发布的 → 提交新版本」上传；扩展 `id` 保持不变，项目引用与存档不受影响。
+- **自检命令**：
+  - `pnpm typecheck`
+  - `pnpm build`
+  - `node tools/test-engine.mjs`（44 项）
+  - `node tools/ssr-check.mjs`（14 项）
+  - `node tools/ssr-battle.mjs`（9 项）
+  - `node tools/validate-release.mjs`（用 Studio 校验器检查发布清单）

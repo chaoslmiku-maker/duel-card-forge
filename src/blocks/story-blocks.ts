@@ -42,6 +42,7 @@ import {
 import {
   getCachedDeck,
   getDuelState,
+  isPanelOpen,
   setDuelState,
   subscribeDuelState,
 } from "../state/duel-store";
@@ -628,7 +629,8 @@ function resolveDeck(
 
 /**
  * 等这一场决斗分出胜负。
- * 面板被关闭（state 变 null）视为中断，返回 aborted，避免剧情卡死。
+ * 玩家中途关掉面板（曾经打开过、随后变为关闭）也视为中断，返回 aborted，
+ * 避免面板已关、没人能继续打牌时剧情永远卡住。
  */
 function waitForDuelEnd(): Promise<
   "player" | "opponent" | "draw" | "aborted"
@@ -638,6 +640,7 @@ function waitForDuelEnd(): Promise<
   if (initial.winner) return Promise.resolve(initial.winner);
   return new Promise((resolve) => {
     let settled = false;
+    let sawPanelOpen = isPanelOpen();
     let unsubscribe: (() => void) | null = null;
 
     function finish(result: "player" | "opponent" | "draw" | "aborted"): void {
@@ -649,11 +652,19 @@ function waitForDuelEnd(): Promise<
 
     unsubscribe = subscribeDuelState(() => {
       const state = getDuelState();
+      if (state?.winner) {
+        finish(state.winner);
+        return;
+      }
       if (!state) {
         finish("aborted");
         return;
       }
-      if (state.winner) finish(state.winner);
+      if (isPanelOpen()) {
+        sawPanelOpen = true;
+        return;
+      }
+      if (sawPanelOpen) finish("aborted");
     });
   });
 }

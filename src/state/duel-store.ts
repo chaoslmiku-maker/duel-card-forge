@@ -8,21 +8,18 @@
  *
  * 一个扩展实例内只有一场决斗；重新开始/离开时把状态置为 null。
  *
- * 另外缓存一份「玩家当前卡组」：Block 拿不到 Extension 实例的 this.save，
- * 所以由面板在读取/修改卡组时同步过来，剧情开战时用它组牌。
+ * 另外缓存两份 UI 侧信息，供拿不到 this.save 的 Block 使用：
+ *   - cachedDeck：玩家当前卡组（面板读取/修改时同步）；
+ *   - panelOpen：面板是否可见（用于判断剧情等待战斗时玩家是否中途关掉了面板）。
  */
 import type { DuelState } from "../engine/duel-engine";
 import type { DeckEntry } from "../types";
 
 let currentState: DuelState | null = null;
+let panelOpen = false;
 const listeners = new Set<() => void>();
 
-export function getDuelState(): DuelState | null {
-  return currentState;
-}
-
-export function setDuelState(next: DuelState | null): void {
-  currentState = next;
+function notify(): void {
   for (const listener of Array.from(listeners)) {
     try {
       listener();
@@ -32,11 +29,31 @@ export function setDuelState(next: DuelState | null): void {
   }
 }
 
+export function getDuelState(): DuelState | null {
+  return currentState;
+}
+
+export function setDuelState(next: DuelState | null): void {
+  currentState = next;
+  notify();
+}
+
 export function subscribeDuelState(listener: () => void): () => void {
   listeners.add(listener);
   return () => {
     listeners.delete(listener);
   };
+}
+
+/** 面板挂载/卸载时更新；剧情 Block 用它判断玩家有没有中途关掉面板。 */
+export function setPanelOpen(open: boolean): void {
+  if (panelOpen === open) return;
+  panelOpen = open;
+  notify();
+}
+
+export function isPanelOpen(): boolean {
+  return panelOpen;
 }
 
 /** 面板最近一次读到的玩家卡组（来自存档）。 */

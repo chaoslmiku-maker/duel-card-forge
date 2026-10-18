@@ -656,12 +656,9 @@ function normalizeRules(raw) {
   };
 }
 let currentState = null;
+let panelOpen = false;
 const listeners = /* @__PURE__ */ new Set();
-function getDuelState() {
-  return currentState;
-}
-function setDuelState(next) {
-  currentState = next;
+function notify() {
   for (const listener of Array.from(listeners)) {
     try {
       listener();
@@ -670,11 +667,26 @@ function setDuelState(next) {
     }
   }
 }
+function getDuelState() {
+  return currentState;
+}
+function setDuelState(next) {
+  currentState = next;
+  notify();
+}
 function subscribeDuelState(listener) {
   listeners.add(listener);
   return () => {
     listeners.delete(listener);
   };
+}
+function setPanelOpen(open) {
+  if (panelOpen === open) return;
+  panelOpen = open;
+  notify();
+}
+function isPanelOpen() {
+  return panelOpen;
 }
 let cachedDeck = [];
 function setCachedDeck(deck) {
@@ -4312,6 +4324,10 @@ function DuelApp(props) {
   useEffect(() => {
     setCachedDeck(deck);
   }, [deck]);
+  useEffect(() => {
+    setPanelOpen(true);
+    return () => setPanelOpen(false);
+  }, []);
   const [tab, setTab] = useState("cards");
   const [selectedCardId, setSelectedCardId] = useState(null);
   const [notice, setNotice] = useState(null);
@@ -5093,6 +5109,7 @@ function waitForDuelEnd() {
   if (initial.winner) return Promise.resolve(initial.winner);
   return new Promise((resolve) => {
     let settled = false;
+    let sawPanelOpen = isPanelOpen();
     let unsubscribe = null;
     function finish(result) {
       if (settled) return;
@@ -5102,11 +5119,19 @@ function waitForDuelEnd() {
     }
     unsubscribe = subscribeDuelState(() => {
       const state = getDuelState();
+      if (state?.winner) {
+        finish(state.winner);
+        return;
+      }
       if (!state) {
         finish("aborted");
         return;
       }
-      if (state.winner) finish(state.winner);
+      if (isPanelOpen()) {
+        sawPanelOpen = true;
+        return;
+      }
+      if (sawPanelOpen) finish("aborted");
     });
   });
 }

@@ -14,6 +14,7 @@ import {
   getDuelState,
   setCachedDeck,
   setDuelState,
+  setPanelOpen,
   subscribeDuelState,
 } from "../state/duel-store";
 import {
@@ -123,6 +124,12 @@ export function DuelApp(props: DuelAppProps): React.ReactElement {
   useEffect(() => {
     setCachedDeck(deck);
   }, [deck]);
+
+  // 面板可见性：剧情「开始战斗」等待结果时，玩家中途关面板要能中止等待。
+  useEffect(() => {
+    setPanelOpen(true);
+    return () => setPanelOpen(false);
+  }, []);
 
   const [tab, setTab] = useState<TabId>("cards");
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);

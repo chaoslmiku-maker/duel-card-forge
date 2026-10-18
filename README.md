@@ -2,9 +2,7 @@
 
 **可视化自由编辑规则**的游戏王风卡牌战斗扩展（LetsGal Studio / AVG Engine）。
 
-[![GitHub](https://img.shields.io/badge/GitHub-chaoslmiku--maker%2Fduel--card--forge-181717?logo=github)](https://github.com/chaoslmiku-maker/duel-card-forge)
-[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.0.0-e7c46a)](https://github.com/chaoslmiku-maker/duel-card-forge/releases)
+> 仓库：https://github.com/chaoslmiku-maker/duel-card-forge ｜ 许可：MIT ｜ 版本：1.0.0
 
 卡牌的**攻击力 / 守备力 / 种族 / 花费 / 卡牌效果 / 立绘 / 等级 / 属性 / 关键词**全部在面板里直接编辑，**对战规则**（生命值、抽卡、能量、场地数量、祭品召唤、穿透、直接攻击、胜负条件……）也全部可视化配置，改完立即生效。剧情里还能用 Block 实时印卡、改卡、直接召唤。
 

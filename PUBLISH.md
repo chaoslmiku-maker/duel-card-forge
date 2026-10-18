@@ -95,3 +95,44 @@ duel-card-forge/
   - `node tools/ssr-check.mjs`（14 项）
   - `node tools/ssr-battle.mjs`（9 项）
   - `node tools/validate-release.mjs`（用 Studio 校验器检查发布清单）
+
+## 八、GitHub 仓库
+
+仓库地址：https://github.com/chaoslmiku-maker/duel-card-forge （公开，MIT）
+
+仓库里**已经包含 `dist/`**，所以别人 `git clone` 后不用装依赖、不用构建，直接把这个目录当扩展导入 Studio 就能用。
+
+```bash
+git clone https://github.com/chaoslmiku-maker/duel-card-forge.git
+cd duel-card-forge
+# 直接导入 Studio，或想改源码时：
+pnpm install && pnpm build && pnpm test
+```
+
+日常更新流程：
+
+```bash
+pnpm build              # 改了 src/ 之后必须重新构建（dist 也要一起提交）
+pnpm test               # 确认断言全绿
+git add -A
+git commit -m "feat: 说明这次改了什么"
+git push
+```
+
+发版（打标签 + GitHub Release）：
+
+```bash
+# extension.json 里的 version 先递增，例如 1.0.0 → 1.0.1
+pnpm build && pnpm pack:release
+git add -A && git commit -m "chore: release v1.0.1"
+git tag -a v1.0.1 -m "决斗卡牌工坊 v1.0.1"
+git push && git push origin v1.0.1
+```
+
+然后在 GitHub 的 `Releases → Draft a new release` 里选刚推的标签，
+把 `release/duel-card-forge-v1.0.1.zip`（玩家导入用）和
+`submit/duel-card-forge-src-v1.0.1.zip`（工坊提交用）拖进附件即可。
+
+> 推送凭据已经存在 Windows 凭据管理器里，平时 `git push` 不会再次要求输入 Token；
+> Token 过期后重新生成一个，下次推送时输入新的即可。
+
